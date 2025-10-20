@@ -1,0 +1,36 @@
+# 日志文件
+logs/*.log
+*.log
+
+# 备份文件
+backup/*
+!backup/.gitkeep
+
+# 临时文件
+*.tmp
+*.swp
+*.swo
+*~
+.DS_Store
+
+# 导出的配置
+config/export_*.conf
+
+# 本地测试数据
+/test_data/
+
+# 密钥和敏感信息
+*.key
+*.pem
+*.pub
+id_rsa*
+id_ed25519*
+
+# 编辑器
+.vscode/
+.idea/
+*.sublime-*
+
+# 系统文件
+Thumbs.db
+.Trash-*
