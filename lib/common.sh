@@ -3,14 +3,27 @@
 # VPS工具核心库,提供日志、输入验证、系统信息等通用功能
 
 # ============ 颜色定义 ============
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-MAGENTA='\033[0;35m'
-CYAN='\033[0;36m'
-NC='\033[0m'
-BOLD='\033[1m'
+# 检测终端是否支持颜色
+if [ -t 1 ] && [ -n "$TERM" ] && [ "$TERM" != "dumb" ] && [ -z "$NO_COLOR" ]; then
+    RED='\033[0;31m'
+    GREEN='\033[0;32m'
+    YELLOW='\033[1;33m'
+    BLUE='\033[0;34m'
+    MAGENTA='\033[0;35m'
+    CYAN='\033[0;36m'
+    NC='\033[0m'
+    BOLD='\033[1m'
+else
+    # 终端不支持颜色,使用空字符串
+    RED=''
+    GREEN=''
+    YELLOW=''
+    BLUE=''
+    MAGENTA=''
+    CYAN=''
+    NC=''
+    BOLD=''
+fi
 
 # ============ 全局变量 ============
 LOG_FILE="${LOG_FILE:-/var/log/vps-tools.log}"
