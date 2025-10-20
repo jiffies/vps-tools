@@ -31,22 +31,22 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # ============ 日志函数 ============
 log_info() {
-    echo -e "${BLUE}[INFO]${NC} $1"
+    printf "${BLUE}[INFO]${NC} %s\n" "$1"
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] [INFO] $1" >> "$LOG_FILE" 2>/dev/null || true
 }
 
 log_success() {
-    echo -e "${GREEN}[✓ SUCCESS]${NC} $1"
+    printf "${GREEN}[SUCCESS]${NC} %s\n" "$1"
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] [SUCCESS] $1" >> "$LOG_FILE" 2>/dev/null || true
 }
 
 log_warning() {
-    echo -e "${YELLOW}[⚠ WARNING]${NC} $1"
+    printf "${YELLOW}[WARNING]${NC} %s\n" "$1"
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] [WARNING] $1" >> "$LOG_FILE" 2>/dev/null || true
 }
 
 log_error() {
-    echo -e "${RED}[✗ ERROR]${NC} $1" >&2
+    printf "${RED}[ERROR]${NC} %s\n" "$1" >&2
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] [ERROR] $1" >> "$LOG_FILE" 2>/dev/null || true
 }
 
@@ -54,13 +54,13 @@ log_step() {
     local current=$1
     local total=$2
     local desc=$3
-    echo -e "${CYAN}[步骤 $current/$total]${NC} $desc"
+    printf "${CYAN}[步骤 %s/%s]${NC} %s\n" "$current" "$total" "$desc"
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] [STEP $current/$total] $desc" >> "$LOG_FILE" 2>/dev/null || true
 }
 
 log_debug() {
     if [ "${DEBUG:-0}" = "1" ]; then
-        echo -e "${MAGENTA}[DEBUG]${NC} $1"
+        printf "${MAGENTA}[DEBUG]${NC} %s\n" "$1"
         echo "[$(date '+%Y-%m-%d %H:%M:%S')] [DEBUG] $1" >> "$LOG_FILE" 2>/dev/null || true
     fi
 }
