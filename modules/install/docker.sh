@@ -25,6 +25,47 @@ check_dependencies() {
     return 0
 }
 
+# ============ UFW + Docker 集成 ============
+install_ufw_docker() {
+    # 检查 UFW 是否安装
+    if ! command -v ufw &>/dev/null; then
+        log_info "UFW 未安装,跳过 UFW + Docker 集成"
+        return 1
+    fi
+
+    log_info "安装 ufw-docker 工具..."
+
+    # 下载 ufw-docker
+    local ufw_docker_url="https://github.com/chaifeng/ufw-docker/raw/master/ufw-docker"
+    if ! curl -fsSL "$ufw_docker_url" -o /usr/local/bin/ufw-docker; then
+        log_error "下载 ufw-docker 失败"
+        return 1
+    fi
+
+    # 设置执行权限
+    chmod +x /usr/local/bin/ufw-docker
+
+    # 安装 ufw-docker 规则
+    log_info "配置 UFW 规则以接管 Docker 流量..."
+    if ! /usr/local/bin/ufw-docker install; then
+        log_error "安装 ufw-docker 规则失败"
+        rm -f /usr/local/bin/ufw-docker
+        return 1
+    fi
+
+    # 重启 UFW
+    if systemctl is-active --quiet ufw; then
+        log_info "重启 UFW 服务..."
+        systemctl restart ufw
+    fi
+
+    log_success "ufw-docker 已安装并配置"
+    log_info "现在 Docker 容器端口默认不对外开放"
+    log_info "使用 'sudo ufw-docker allow <容器名> <端口>' 来开放端口"
+
+    return 0
+}
+
 # ============ 安装函数 ============
 install() {
     log_info "开始安装 $MODULE_NAME..."
@@ -118,7 +159,7 @@ install() {
     fi
 
     # 步骤8: 验证安装
-    log_step 8 8 "验证安装"
+    log_step 8 10 "验证安装"
     if ! docker --version &>/dev/null; then
         log_error "Docker安装验证失败"
         return 1
@@ -129,15 +170,25 @@ install() {
         return 1
     fi
 
-    # 创建安装标记
-    mkdir -p /var/lib/docker
-    touch "$DOCKER_FLAG"
+    # 步骤9: 安装 ufw-docker (让UFW接管Docker流量)
+    log_step 9 10 "配置 UFW + Docker 集成"
+    if install_ufw_docker; then
+        log_success "UFW + Docker 集成配置成功"
+    else
+        log_warning "UFW + Docker 集成配置失败 (如果未安装UFW则跳过)"
+    fi
 
+    # 步骤10: 添加用户到docker组
+    log_step 10 10 "配置用户权限"
     # 添加当前用户到docker组(如果不是root)
     if [ -n "$SUDO_USER" ] && [ "$SUDO_USER" != "root" ]; then
         log_info "将用户 $SUDO_USER 添加到 docker 组"
         usermod -aG docker "$SUDO_USER"
     fi
+
+    # 创建安装标记
+    mkdir -p /var/lib/docker
+    touch "$DOCKER_FLAG"
 
     log_success "$MODULE_NAME 安装成功!"
     show_post_install_info
@@ -260,6 +311,48 @@ ${YELLOW}${BOLD}重要提示:${NC}
   2. 使用 'docker compose' (有空格) 而不是 'docker-compose'
   3. Docker Compose V2 已内置,无需单独安装
 
+EOF
+
+    # 检查是否安装了 ufw-docker
+    if [ -x /usr/local/bin/ufw-docker ]; then
+        cat << EOF
+${GREEN}${BOLD}✓ UFW + Docker 集成已配置${NC}
+
+${BOLD}防火墙控制:${NC}
+  ${GREEN}Docker容器端口默认不对外开放${NC}
+  必须手动使用以下命令开放端口:
+
+${BOLD}开放端口命令:${NC}
+  # 允许所有人访问容器端口
+  sudo ufw-docker allow <容器名> <端口>
+
+  # 只允许特定IP访问
+  sudo ufw-docker allow <容器名> <端口> <IP地址>
+
+${BOLD}示例:${NC}
+  # 查看容器名称
+  docker ps --format "{{.Names}}"
+
+  # 允许所有人访问 nginx 的 80 端口
+  sudo ufw-docker allow nginx-app-1 80
+
+  # 只允许 192.168.1.100 访问 mysql 的 3306 端口
+  sudo ufw-docker allow mysql-1 3306 192.168.1.100
+
+${BOLD}管理命令:${NC}
+  sudo ufw-docker list                    # 查看规则
+  sudo ufw-docker delete allow <容器> <端口>  # 删除规则
+  sudo ufw status numbered                # 查看UFW状态
+
+${YELLOW}${BOLD}⚠️ 安全提醒:${NC}
+  - 容器映射的端口不会自动对外开放
+  - 这是安全的默认行为,防止意外暴露服务
+  - 安装容器后会提示需要开放的端口
+
+EOF
+    fi
+
+    cat << EOF
 ${BOLD}常用命令:${NC}
   docker ps                  # 查看运行中的容器
   docker images              # 查看镜像列表

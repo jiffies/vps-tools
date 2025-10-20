@@ -280,8 +280,58 @@ ${YELLOW}${BOLD}重要提示:${NC}
   1. ${RED}请立即登录并修改默认密码!${NC}
   2. 首次登录后需要设置新的邮箱和密码
   3. 建议配置SSL证书(支持Let's Encrypt自动申请)
-  4. 确保防火墙已开放 80, 81, 443 端口
 
+EOF
+
+    # 检查是否安装了 ufw-docker
+    if [ -x /usr/local/bin/ufw-docker ]; then
+        local container_name=$(docker ps --filter ancestor=jc21/nginx-proxy-manager:latest --format "{{.Names}}" 2>/dev/null | head -1)
+        if [ -z "$container_name" ]; then
+            container_name="nginx-proxy-manager-app-1"
+        fi
+
+        cat << EOF
+${RED}${BOLD}⚠️  防火墙配置required!${NC}
+
+${YELLOW}容器端口默认不对外开放,需要手动配置防火墙:${NC}
+
+${BOLD}开放端口命令 (必须执行):${NC}
+
+  # 1. 允许所有人访问 HTTP/HTTPS (网站访问)
+  ${GREEN}sudo ufw-docker allow $container_name 80${NC}
+  ${GREEN}sudo ufw-docker allow $container_name 443${NC}
+
+  # 2. 管理端口 (推荐只允许你的IP访问)
+  ${YELLOW}sudo ufw-docker allow $container_name 81 YOUR_IP_ADDRESS${NC}
+
+  # 或者允许所有人访问管理端口 (不推荐)
+  ${YELLOW}sudo ufw-docker allow $container_name 81${NC}
+
+${BOLD}查看容器名称:${NC}
+  docker ps --format "{{.Names}}"
+
+${BOLD}检查端口状态:${NC}
+  sudo ufw-docker list
+
+${RED}${BOLD}注意:${NC}
+  - ${RED}在开放端口之前,无法从外部访问服务${NC}
+  - 这是安全的默认行为
+  - 建议限制管理端口(81)只允许特定IP访问
+
+EOF
+    else
+        cat << EOF
+${YELLOW}${BOLD}防火墙配置:${NC}
+  如果启用了UFW,需要开放以下端口:
+
+  ${GREEN}sudo ufw allow 80/tcp comment 'HTTP'${NC}
+  ${GREEN}sudo ufw allow 443/tcp comment 'HTTPS'${NC}
+  ${YELLOW}sudo ufw allow 81/tcp comment 'NPM Admin'${NC}
+
+EOF
+    fi
+
+    cat << EOF
 ${BOLD}管理命令:${NC}
   启动服务:
     ${CYAN}cd $NPM_DIR && docker compose up -d${NC}
