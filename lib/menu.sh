@@ -14,47 +14,46 @@ show_main_menu() {
     local mem=$(get_total_memory)
     local disk=$(get_disk_usage)
 
-    cat << EOF
-${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}
-           ${BOLD}${GREEN}VPS 一体化配置工具 v2.0${NC}
-${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}
-
-${BLUE}系统信息:${NC}
-  IP地址: ${GREEN}$ip${NC}
-  系统: $os
-  内存: $mem  |  磁盘: $disk
-  用户: $(whoami)
-
-${CYAN}================================================================${NC}
-${GREEN}[系统初始化]${NC}
-  ${BOLD}1${NC}.  >> 一键初始化VPS ${YELLOW}(推荐新服务器)${NC}
-  ${BOLD}2${NC}.  [] 更新系统
-  ${BOLD}3${NC}.  [] 创建用户
-  ${BOLD}4${NC}.  [] 配置SSH安全
-  ${BOLD}5${NC}.  [] 配置Fail2Ban
-  ${BOLD}6${NC}.  [] 配置防火墙
-  ${BOLD}7${NC}.  [] 系统安全加固
-
-${BLUE}[应用安装]${NC}
-  ${BOLD}11${NC}. >> 一键安装全部应用
-  ${BOLD}12${NC}. [] 安装Docker
-  ${BOLD}13${NC}. [] 安装Nginx Proxy Manager
-  ${BOLD}14${NC}. [] 安装3x-ui
-
-${YELLOW}[系统管理]${NC}
-  ${BOLD}21${NC}. [] 查看服务状态
-  ${BOLD}22${NC}. [] 备份配置
-  ${BOLD}23${NC}. [] 卸载应用
-  ${BOLD}24${NC}. [] 查看日志
-
-${MAGENTA}[高级选项]${NC}
-  ${BOLD}31${NC}. [] 使用预设配置
-  ${BOLD}32${NC}. [] 导出当前配置
-  ${BOLD}33${NC}. [] 系统维护工具
-
-  ${BOLD}0${NC}.  << 退出
-${CYAN}================================================================${NC}
-EOF
+    # 使用printf输出菜单(heredoc不会解析变量)
+    printf "%s\n" "${CYAN}================================================================${NC}"
+    printf "%s\n" "           ${BOLD}${GREEN}VPS 一体化配置工具 v2.0${NC}"
+    printf "%s\n" "${CYAN}================================================================${NC}"
+    printf "\n"
+    printf "%s\n" "${BLUE}系统信息:${NC}"
+    printf "  IP地址: %s\n" "${GREEN}$ip${NC}"
+    printf "  系统: %s\n" "$os"
+    printf "  内存: %s  |  磁盘: %s\n" "$mem" "$disk"
+    printf "  用户: %s\n" "$(whoami)"
+    printf "\n"
+    printf "%s\n" "${CYAN}================================================================${NC}"
+    printf "%s\n" "${GREEN}[系统初始化]${NC}"
+    printf "  %s.  >> 一键初始化VPS %s\n" "${BOLD}1${NC}" "${YELLOW}(推荐新服务器)${NC}"
+    printf "  %s.  [] 更新系统\n" "${BOLD}2${NC}"
+    printf "  %s.  [] 创建用户\n" "${BOLD}3${NC}"
+    printf "  %s.  [] 配置SSH安全\n" "${BOLD}4${NC}"
+    printf "  %s.  [] 配置Fail2Ban\n" "${BOLD}5${NC}"
+    printf "  %s.  [] 配置防火墙\n" "${BOLD}6${NC}"
+    printf "  %s.  [] 系统安全加固\n" "${BOLD}7${NC}"
+    printf "\n"
+    printf "%s\n" "${BLUE}[应用安装]${NC}"
+    printf "  %s. >> 一键安装全部应用\n" "${BOLD}11${NC}"
+    printf "  %s. [] 安装Docker\n" "${BOLD}12${NC}"
+    printf "  %s. [] 安装Nginx Proxy Manager\n" "${BOLD}13${NC}"
+    printf "  %s. [] 安装3x-ui\n" "${BOLD}14${NC}"
+    printf "\n"
+    printf "%s\n" "${YELLOW}[系统管理]${NC}"
+    printf "  %s. [] 查看服务状态\n" "${BOLD}21${NC}"
+    printf "  %s. [] 备份配置\n" "${BOLD}22${NC}"
+    printf "  %s. [] 卸载应用\n" "${BOLD}23${NC}"
+    printf "  %s. [] 查看日志\n" "${BOLD}24${NC}"
+    printf "\n"
+    printf "%s\n" "${MAGENTA}[高级选项]${NC}"
+    printf "  %s. [] 使用预设配置\n" "${BOLD}31${NC}"
+    printf "  %s. [] 导出当前配置\n" "${BOLD}32${NC}"
+    printf "  %s. [] 系统维护工具\n" "${BOLD}33${NC}"
+    printf "\n"
+    printf "  %s.  << 退出\n" "${BOLD}0${NC}"
+    printf "%s\n" "${CYAN}================================================================${NC}"
 }
 
 # ============ 子菜单 ============
