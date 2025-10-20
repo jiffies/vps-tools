@@ -81,4 +81,23 @@ EOL'
     echo "默认管理员密码: changeme"
 fi
 
+# 3x-ui 安装部分
+read -p "是否安装3x-ui? (y/n): " install_3xui
+if [ "$install_3xui" = "y" ]; then
+    echo "步骤1: 下载3x-ui安装脚本..."
+    sudo wget --no-check-certificate -O /tmp/install.sh https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh
+
+    echo "步骤2: 设置脚本执行权限..."
+    sudo chmod +x /tmp/install.sh
+
+    echo "步骤3: 执行3x-ui安装脚本..."
+    sudo bash /tmp/install.sh
+
+    echo "步骤4: 清理临时文件..."
+    sudo rm -f /tmp/install.sh
+
+    echo "3x-ui安装完成！"
+    echo "请使用'sudo x-ui' 命令管理面板"
+fi
+
 echo "所有安装任务已完成！"
