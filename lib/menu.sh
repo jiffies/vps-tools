@@ -93,7 +93,8 @@ EOF
 read_menu_choice() {
     local prompt="${1:-请输入选项}"
     local range="${2:-[0-33]}"
-    echo -n "$prompt $range: "
+    # 提示信息输出到stderr,避免被命令替换捕获
+    echo -n "$prompt $range: " >&2
     read -r choice
     echo "$choice"
 }
