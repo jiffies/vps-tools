@@ -32,7 +32,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **安装模块(install/):**
 - docker.sh - Docker + Compose V2
 - nginx-proxy-manager.sh - NPM(已修复安全问题)
-- 3x-ui.sh - 3x-ui面板
+- s-ui.sh - s-ui面板
 
 ## 模块开发规范
 
@@ -158,7 +158,7 @@ tail -f logs/vps-tools.log
 
 1. **不要在本地执行**: 这些脚本设计用于在VPS上执行
 2. **需要root权限**: 大部分操作需要root权限
-3. **保留原脚本**: initVPS.sh和installApp.sh保留作为参考
+3. **旧脚本已移除**: 统一使用 vps-tool.sh 作为唯一入口
 4. **模块独立运行**: 每个模块可以独立执行,也可以通过主程序调用
 5. **错误不退出**: 使用 set +e,手动控制错误处理
 

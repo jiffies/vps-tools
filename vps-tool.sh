@@ -16,6 +16,7 @@ source "$SCRIPT_DIR/lib/module-loader.sh"
 VERSION="2.0"
 CONFIG_DIR="$SCRIPT_DIR/config"
 PRESET_DIR="$CONFIG_DIR/presets"
+INIT_USE_ROOT="false"
 
 # ============ 初始化 ============
 initialize() {
@@ -35,6 +36,96 @@ initialize() {
     log_debug "脚本目录: $SCRIPT_DIR"
 }
 
+# ============ 初始化登录用户策略 ============
+select_init_login_mode() {
+    local saved_mode
+    local saved_user
+    saved_mode="$(get_local_state "SSH_LOGIN_MODE" 2>/dev/null || true)"
+    saved_user="$(get_local_state "SSH_LOGIN_USER" 2>/dev/null || true)"
+
+    echo
+    print_separator "─" 60
+    echo -e "${BOLD}SSH登录用户策略${NC}"
+    if [ -n "$saved_user" ]; then
+        echo -e "  当前保存: ${GREEN}${saved_mode:-unknown} / ${saved_user}${NC}"
+    fi
+    echo "  1. 使用 root (快速,不创建新用户)"
+    echo "  2. 创建新用户名 (更安全,推荐)"
+    print_separator "─" 60
+
+    local choice
+    while true; do
+        printf "${BLUE}请选择 [1-2]: ${NC}"
+        read -r choice
+        case "$choice" in
+            1)
+                INIT_USE_ROOT="true"
+                set_local_state "SSH_LOGIN_MODE" "root" || true
+                set_local_state "SSH_LOGIN_USER" "root" || true
+                log_warning "已选择 root 作为登录用户"
+                return 0
+                ;;
+            2)
+                INIT_USE_ROOT="false"
+                set_local_state "SSH_LOGIN_MODE" "create-user" || true
+                set_local_state "SSH_LOGIN_USER" "" || true
+                log_info "已选择创建新用户"
+                return 0
+                ;;
+            *)
+                log_error "无效选项: $choice"
+                ;;
+        esac
+    done
+}
+
+# ============ 应用安装登录用户策略 ============
+select_install_login_mode() {
+    local saved_user
+    saved_user="$(get_local_state "SSH_LOGIN_USER" 2>/dev/null || true)"
+
+    echo
+    print_separator "─" 60
+    echo -e "${BOLD}s-ui访问建议使用哪个SSH用户?${NC}"
+    if [ -n "$saved_user" ]; then
+        echo -e "  当前保存用户: ${GREEN}${saved_user}${NC}"
+    fi
+    echo "  1. 使用 root"
+    echo "  2. 创建新用户名并保存"
+    print_separator "─" 60
+
+    local choice
+    while true; do
+        printf "${BLUE}请选择 [1-2]: ${NC}"
+        read -r choice
+        case "$choice" in
+            1)
+                set_local_state "SSH_LOGIN_MODE" "root" || true
+                set_local_state "SSH_LOGIN_USER" "root" || true
+                log_info "已保存登录用户: root"
+                return 0
+                ;;
+            2)
+                if ! run_module "init" "02-create-user" "install"; then
+                    log_error "创建新用户失败,已取消一键安装"
+                    return 1
+                fi
+                local created_user
+                created_user="$(get_local_state "SSH_LOGIN_USER" 2>/dev/null || true)"
+                if [ -z "$created_user" ]; then
+                    created_user="$(head -n1 /var/log/vps-tools/init-02-create-user.flag 2>/dev/null)"
+                    [ -n "$created_user" ] && set_local_state "SSH_LOGIN_USER" "$created_user" || true
+                fi
+                log_info "已保存登录用户: ${created_user:-未知}"
+                return 0
+                ;;
+            *)
+                log_error "无效选项: $choice"
+                ;;
+        esac
+    done
+}
+
 # ============ 一键初始化VPS ============
 run_init_all() {
     print_header "一键初始化VPS"
@@ -43,9 +134,20 @@ run_init_all() {
         return 1
     fi
 
+    if ! select_init_login_mode; then
+        return 1
+    fi
+
     local modules=(
         "01-system-update"
-        "02-create-user"
+    )
+
+    # root模式下跳过“创建用户”步骤
+    if [ "$INIT_USE_ROOT" != "true" ]; then
+        modules+=("02-create-user")
+    fi
+
+    modules+=(
         "03-ssh-config"
         "04-fail2ban"
         "05-firewall"
@@ -68,14 +170,18 @@ run_init_all() {
 run_install_all() {
     print_header "一键安装全部应用"
 
-    if ! confirm_action "一键安装全部应用" "将安装 Docker、Nginx Proxy Manager 和 3x-ui"; then
+    if ! confirm_action "一键安装全部应用" "将安装 Docker、Nginx Proxy Manager 和 s-ui"; then
+        return 1
+    fi
+
+    if ! select_install_login_mode; then
         return 1
     fi
 
     local modules=(
         "docker"
         "nginx-proxy-manager"
-        "3x-ui"
+        "s-ui"
     )
 
     run_modules_batch "install" "${modules[@]}"
@@ -143,7 +249,7 @@ run_uninstall_menu() {
                 run_module "install" "nginx-proxy-manager" "uninstall"
                 ;;
             3)
-                run_module "install" "3x-ui" "uninstall"
+                run_module "install" "s-ui" "uninstall"
                 ;;
             *)
                 log_error "无效选项: $choice"
@@ -365,7 +471,7 @@ main_loop() {
                 run_module "install" "nginx-proxy-manager" "install"
                 ;;
             14)
-                run_module "install" "3x-ui" "install"
+                run_module "install" "s-ui" "install"
                 ;;
 
             # 系统管理

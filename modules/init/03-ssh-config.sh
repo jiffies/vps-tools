@@ -56,6 +56,12 @@ install() {
         return 1
     fi
     CONFIGURED_USER="$username"
+    set_local_state "SSH_LOGIN_USER" "$CONFIGURED_USER" || true
+    if [ "$CONFIGURED_USER" = "root" ]; then
+        set_local_state "SSH_LOGIN_MODE" "root" || true
+    else
+        set_local_state "SSH_LOGIN_MODE" "create-user" || true
+    fi
     log_success "已选择用户: $username"
 
     # 步骤2: 设置SSH端口
@@ -85,7 +91,9 @@ install() {
 
     # 等待用户上传公钥
     log_info "等待公钥上传..."
-    local ssh_dir="/home/$username/.ssh"
+    local user_home
+    user_home=$(get_user_home "$username")
+    local ssh_dir="$user_home/.ssh"
     local authorized_keys="$ssh_dir/authorized_keys"
 
     while true; do
@@ -155,13 +163,41 @@ EOF
 }
 
 # ============ 选择用户 ============
+get_user_home() {
+    local target_user="$1"
+    if [ "$target_user" = "root" ]; then
+        echo "/root"
+        return 0
+    fi
+
+    local home_dir
+    home_dir=$(getent passwd "$target_user" | cut -d: -f6)
+    if [ -n "$home_dir" ]; then
+        echo "$home_dir"
+    else
+        echo "/home/$target_user"
+    fi
+}
+
 select_user() {
+    local preferred_user
+    preferred_user=$(get_local_state "SSH_LOGIN_USER" 2>/dev/null || true)
+    if [ -n "$preferred_user" ]; then
+        if [ "$preferred_user" = "root" ] || id "$preferred_user" &>/dev/null; then
+            username="$preferred_user"
+            log_info "使用已保存登录用户: $username"
+            return 0
+        fi
+        log_warning "已保存用户不存在: $preferred_user"
+    fi
+
     # 列出系统中的普通用户 (UID >= 1000)
-    local users=($(awk -F: '$3 >= 1000 && $3 < 65534 {print $1}' /etc/passwd))
+    local users=("root")
+    local normal_users=($(awk -F: '$3 >= 1000 && $3 < 65534 {print $1}' /etc/passwd))
+    users+=("${normal_users[@]}")
 
     if [ ${#users[@]} -eq 0 ]; then
-        log_error "没有找到普通用户"
-        log_info "请先创建用户 (选项3: 创建用户)"
+        log_error "没有找到可用用户"
         return 1
     fi
 
@@ -186,7 +222,9 @@ select_user() {
 
 # ============ 准备SSH目录 ============
 prepare_ssh_directory() {
-    local ssh_dir="/home/$username/.ssh"
+    local user_home
+    user_home=$(get_user_home "$username")
+    local ssh_dir="$user_home/.ssh"
 
     # 创建.ssh目录
     if [ ! -d "$ssh_dir" ]; then
@@ -264,6 +302,12 @@ backup_ssh_config() {
 
 # ============ 配置SSH ============
 configure_ssh() {
+    local permit_root_login="no"
+    if [ "$CONFIGURED_USER" = "root" ]; then
+        # 允许root仅通过密钥登录，避免密码明文/暴力破解风险
+        permit_root_login="prohibit-password"
+    fi
+
     # 生成新的SSH配置
     cat > "$SSH_CONFIG" <<EOF
 # VPS Tools 自动生成的SSH配置
@@ -276,7 +320,7 @@ Include /etc/ssh/sshd_config.d/*.conf
 Port $CONFIGURED_PORT
 
 # 认证配置
-PermitRootLogin no
+PermitRootLogin $permit_root_login
 PubkeyAuthentication yes
 AuthorizedKeysFile .ssh/authorized_keys
 PasswordAuthentication no
@@ -471,6 +515,10 @@ verify_installation() {
 # ============ 安装后信息 (可选) ============
 show_post_install_info() {
     local ip=$(get_server_ip)
+    local root_login_tip="root登录已禁用"
+    if [ "$CONFIGURED_USER" = "root" ]; then
+        root_login_tip="root仅允许SSH密钥登录 (已禁用密码登录)"
+    fi
 
     cat << EOF
 
@@ -493,7 +541,7 @@ ${CYAN}Linux/MacOS:${NC}
 
 ${RED}${BOLD}重要提示:${NC}
   1. ${RED}请在新终端测试连接,确认可以登录后再关闭当前会话${NC}
-  2. root登录已禁用
+  2. $root_login_tip
   3. 密码认证已禁用
   4. 配置备份: $SSH_CONFIG_BACKUP
 

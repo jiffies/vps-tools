@@ -148,7 +148,7 @@ export TERM=xterm-256color
 │   ├── install/
 │   │   ├── docker.sh   ✓ 可执行
 │   │   ├── nginx-proxy-manager.sh ✓ 可执行
-│   │   └── 3x-ui.sh    ✓ 可执行
+│   │   └── s-ui.sh    ✓ 可执行
 │   ├── init/
 │   │   └── 01-system-update.sh ✓ 可执行
 │   └── MODULE_TEMPLATE.sh

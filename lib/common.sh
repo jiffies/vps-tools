@@ -31,6 +31,7 @@ fi
 # ============ 全局变量 ============
 LOG_FILE="${LOG_FILE:-/var/log/vps-tools.log}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+STATE_FILE="${STATE_FILE:-/var/log/vps-tools/runtime-state.conf}"
 
 # ============ 日志函数 ============
 log_info() {
@@ -417,6 +418,41 @@ safe_write() {
     mv "$tmpfile" "$file" || return 1
 
     log_debug "已写入文件: $file"
+    return 0
+}
+
+# ============ 本地状态存储 ============
+set_local_state() {
+    local key="$1"
+    local value="$2"
+
+    if [ -z "$key" ]; then
+        return 1
+    fi
+
+    mkdir -p "$(dirname "$STATE_FILE")" 2>/dev/null || return 1
+    touch "$STATE_FILE" 2>/dev/null || return 1
+
+    local escaped_value
+    escaped_value=$(printf '%s' "$value" | sed 's/[&|]/\\&/g')
+
+    if grep -q "^${key}=" "$STATE_FILE" 2>/dev/null; then
+        sed -i "s|^${key}=.*|${key}=${escaped_value}|" "$STATE_FILE" 2>/dev/null || return 1
+    else
+        printf "%s=%s\n" "$key" "$value" >> "$STATE_FILE" || return 1
+    fi
+
+    return 0
+}
+
+get_local_state() {
+    local key="$1"
+
+    if [ -z "$key" ] || [ ! -f "$STATE_FILE" ]; then
+        return 1
+    fi
+
+    grep "^${key}=" "$STATE_FILE" 2>/dev/null | tail -n1 | cut -d= -f2-
     return 0
 }
 

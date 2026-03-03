@@ -31,7 +31,7 @@ vps-tools/
 │   ├── install/                   # 安装模块
 │   │   ├── docker.sh
 │   │   ├── nginx-proxy-manager.sh
-│   │   ├── 3x-ui.sh
+│   │   ├── s-ui.sh
 │   │   └── caddy.sh              # 示例:以后可以轻松添加
 │   │
 │   └── manage/                    # 管理模块
@@ -86,7 +86,7 @@ vps-tools/
   11. 一键安装全部应用
   12. 安装Docker
   13. 安装Nginx Proxy Manager
-  14. 安装3x-ui
+  14. 安装s-ui
   15. 安装Caddy (示例)
 
 [系统管理]
@@ -669,7 +669,7 @@ ${BLUE}[应用安装]${NC}
   11. 🎯 一键安装全部应用
   12. 🐳 安装Docker
   13. 🌐 安装Nginx Proxy Manager
-  14. 📡 安装3x-ui
+  14. 📡 安装s-ui
 
 ${YELLOW}[系统管理]${NC}
   21. 📊 查看服务状态
@@ -773,7 +773,7 @@ main_loop() {
                 run_module "install" "nginx-proxy-manager" "install"
                 ;;
             14)
-                run_module "install" "3x-ui" "install"
+                run_module "install" "s-ui" "install"
                 ;;
             21)
                 show_status
@@ -838,7 +838,7 @@ run_install_all() {
     local modules=(
         "docker"
         "nginx-proxy-manager"
-        "3x-ui"
+        "s-ui"
     )
 
     for module in "${modules[@]}"; do
@@ -878,7 +878,7 @@ run_uninstall_menu() {
     echo "选择要卸载的应用:"
     echo "  1. Docker"
     echo "  2. Nginx Proxy Manager"
-    echo "  3. 3x-ui"
+    echo "  3. s-ui"
     echo "  0. 返回"
 
     read -p "请选择: " choice
@@ -886,7 +886,7 @@ run_uninstall_menu() {
     case $choice in
         1) run_module "install" "docker" "uninstall" ;;
         2) run_module "install" "nginx-proxy-manager" "uninstall" ;;
-        3) run_module "install" "3x-ui" "uninstall" ;;
+        3) run_module "install" "s-ui" "uninstall" ;;
         0) return ;;
         *) log_error "无效选项" ;;
     esac
@@ -1097,7 +1097,7 @@ FIREWALL_ALLOW_PORTS="80,443,81,22222"
 # 应用安装
 INSTALL_DOCKER=yes
 INSTALL_NPM=yes
-INSTALL_3XUI=no
+INSTALL_SUI=no
 
 # 安全加固
 SECURITY_HARDENING=yes

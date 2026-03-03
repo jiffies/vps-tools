@@ -79,8 +79,8 @@
 - **安全改进**: 改用bridge网络而非host模式
 - **状态**: 已实现
 
-### 3x-ui.sh ✅
-- **功能**: 安装3x-ui管理面板
+### s-ui.sh ✅
+- **功能**: 安装s-ui管理面板
 - **包含**:
   - 下载官方安装脚本
   - 执行交互式安装
@@ -154,7 +154,7 @@
 docker (无依赖)
   ↓
 nginx-proxy-manager (依赖Docker)
-3x-ui (依赖Docker)
+s-ui (依赖Docker)
 ```
 
 ---
@@ -213,7 +213,7 @@ nginx-proxy-manager (依赖Docker)
 ### 从 installApp.sh 迁移
 - ✅ docker: Docker安装部分
 - ✅ nginx-proxy-manager: NPM安装部分
-- ✅ 3x-ui: 3x-ui安装部分
+- ✅ s-ui: s-ui安装部分
 
 ### 改进点
 - 模块化设计，可单独使用

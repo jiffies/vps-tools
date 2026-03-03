@@ -141,11 +141,11 @@ detect_service_ports() {
         log_info "检测到Nginx Proxy Manager端口: 80, 443, 81"
     fi
 
-    # 检测3x-ui
-    local xui_flag="/var/log/vps-tools/install-3x-ui.flag"
-    if [ -f "$xui_flag" ]; then
-        # 3x-ui的端口需要用户配置,这里仅提示
-        log_info "检测到3x-ui,请手动配置相关端口"
+    # 检测s-ui
+    local sui_flag="/var/log/vps-tools/install-s-ui.flag"
+    if [ -f "$sui_flag" ]; then
+        # s-ui的端口需要用户配置,这里仅提示
+        log_info "检测到s-ui,请手动配置相关端口"
     fi
 }
 

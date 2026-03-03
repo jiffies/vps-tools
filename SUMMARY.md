@@ -14,7 +14,7 @@
 #### 安装模块 (100% 核心功能)
 - [x] docker.sh - Docker + Compose V2安装 (✅ 已修复HTTPS安全问题)
 - [x] nginx-proxy-manager.sh - NPM安装 (✅ 已修复网络安全问题)
-- [x] 3x-ui.sh - 3x-ui面板安装
+- [x] s-ui.sh - s-ui面板安装
 
 #### 初始化模块 (20% 完成)
 - [x] 01-system-update.sh - 系统更新
@@ -210,7 +210,7 @@
 - [x] lib/module-loader.sh
 - [x] modules/install/docker.sh
 - [x] modules/install/nginx-proxy-manager.sh
-- [x] modules/install/3x-ui.sh
+- [x] modules/install/s-ui.sh
 - [x] modules/init/01-system-update.sh
 - [x] modules/MODULE_TEMPLATE.sh
 

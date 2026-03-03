@@ -107,7 +107,7 @@ vps-tools/
 │   └── install/                # 安装模块
 │       ├── docker.sh
 │       ├── nginx-proxy-manager.sh
-│       └── 3x-ui.sh
+│       └── s-ui.sh
 │
 └── lib/                        # 核心库
     ├── common.sh              # 通用函数
@@ -154,7 +154,7 @@ vps-tools/
 - [Docker Compose](COMMAND-REFERENCE.md#docker-compose)
 - [ufw-docker](COMMAND-REFERENCE.md#ufw-docker)
 - [Nginx Proxy Manager](COMMAND-REFERENCE.md#nginx-proxy-manager)
-- [3x-ui](COMMAND-REFERENCE.md#3x-ui)
+- [s-ui](COMMAND-REFERENCE.md#s-ui)
 
 ### 运维工具
 - [日志查看](COMMAND-REFERENCE.md#日志查看)

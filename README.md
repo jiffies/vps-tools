@@ -83,7 +83,7 @@ vps-tools/
 │   ├── install/                   # 安装模块
 │   │   ├── docker.sh
 │   │   ├── nginx-proxy-manager.sh
-│   │   └── 3x-ui.sh
+│   │   └── s-ui.sh
 │   └── MODULE_TEMPLATE.sh         # 模块模板
 ├── config/                        # 配置文件
 │   ├── templates/                 # 配置模板
@@ -114,7 +114,7 @@ vps-tools/
 |------|------|------|
 | docker | 安装Docker Engine + Compose V2 | ✅ |
 | nginx-proxy-manager | 安装NPM(已修复网络安全问题) | ✅ |
-| 3x-ui | 安装3x-ui面板 | ✅ |
+| s-ui | 安装s-ui面板 | ✅ |
 
 ## 🔒 安全改进
 
@@ -335,7 +335,7 @@ MIT License
 - [x] 核心框架和模块加载器
 - [x] Docker安装模块
 - [x] Nginx Proxy Manager安装(修复安全问题)
-- [x] 3x-ui安装模块
+- [x] s-ui安装模块
 - [ ] 完整的SSH配置模块(含安全修复)
 - [ ] Fail2Ban配置模块
 - [ ] 防火墙配置模块

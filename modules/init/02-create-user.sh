@@ -97,6 +97,8 @@ install() {
         mkdir -p "$(dirname "$FLAG_FILE")"
         echo "$username" > "$FLAG_FILE"
         echo "$(date '+%Y-%m-%d %H:%M:%S')" >> "$FLAG_FILE"
+        set_local_state "SSH_LOGIN_MODE" "create-user" || true
+        set_local_state "SSH_LOGIN_USER" "$username" || true
 
         log_success "$MODULE_NAME 完成!"
         show_post_install_info

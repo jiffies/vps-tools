@@ -12,7 +12,7 @@
 - [Docker Compose](#docker-compose)
 - [ufw-docker](#ufw-docker)
 - [Nginx Proxy Manager](#nginx-proxy-manager)
-- [3x-ui](#3x-ui)
+- [s-ui](#s-ui)
 - [日志查看](#日志查看)
 - [网络诊断](#网络诊断)
 - [磁盘管理](#磁盘管理)
@@ -806,12 +806,12 @@ docker exec nginx-proxy-manager-app-1 certbot renew --force-renewal
 
 ---
 
-## 3x-ui
+## s-ui
 
 ### 基本命令
 ```bash
-# 启动3x-ui管理面板
-sudo x-ui
+# 启动s-ui管理面板
+sudo s-ui
 
 # 常用选项
 1  - 安装
@@ -826,46 +826,46 @@ sudo x-ui
 ### 服务管理
 ```bash
 # 启动
-sudo systemctl start x-ui
+sudo systemctl start s-ui
 
 # 停止
-sudo systemctl stop x-ui
+sudo systemctl stop s-ui
 
 # 重启
-sudo systemctl restart x-ui
+sudo systemctl restart s-ui
 
 # 查看状态
-sudo systemctl status x-ui
+sudo systemctl status s-ui
 
 # 开机自启
-sudo systemctl enable x-ui
+sudo systemctl enable s-ui
 
 # 禁用自启
-sudo systemctl disable x-ui
+sudo systemctl disable s-ui
 ```
 
 ### 日志查看
 ```bash
 # 查看日志
-sudo x-ui log
+sudo s-ui log
 
 # 实时查看
-sudo journalctl -u x-ui -f
+sudo journalctl -u s-ui -f
 
 # 查看最近日志
-sudo journalctl -u x-ui -n 100
+sudo journalctl -u s-ui -n 100
 ```
 
 ### 配置管理
 ```bash
 # 配置文件目录
-/usr/local/x-ui/
+/usr/local/s-ui/
 
 # 数据库
-/etc/x-ui/x-ui.db
+/etc/s-ui/s-ui.db
 
 # 备份
-sudo cp /etc/x-ui/x-ui.db /root/x-ui-backup-$(date +%Y%m%d).db
+sudo cp /etc/s-ui/s-ui.db /root/s-ui-backup-$(date +%Y%m%d).db
 ```
 
 ---
@@ -1141,7 +1141,7 @@ echo "=== Docker ===" && sudo ufw-docker list
 # 备份重要数据
 tar -czf backup-$(date +%Y%m%d).tar.gz \
   /opt/nginx-proxy-manager \
-  /etc/x-ui
+  /etc/s-ui
 ```
 
 ### 紧急故障处理

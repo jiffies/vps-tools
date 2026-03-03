@@ -122,7 +122,22 @@ disable_unnecessary_services() {
 
 # ============ 配置内核参数 ============
 configure_kernel_parameters() {
-    cat > "$SYSCTL_CONFIG" <<'EOF'
+    local raw_config
+    local filtered_config
+    local supported_keys
+    local skipped=0
+    local total_keys=0
+
+    raw_config=$(mktemp)
+    filtered_config=$(mktemp)
+    supported_keys=$(mktemp)
+
+    if [ -z "$raw_config" ] || [ -z "$filtered_config" ] || [ -z "$supported_keys" ]; then
+        log_error "创建临时文件失败"
+        return 1
+    fi
+
+    cat > "$raw_config" <<'EOF'
 # VPS Tools 安全加固配置
 # 生成时间: AUTO_TIMESTAMP
 
@@ -185,8 +200,7 @@ net.ipv4.tcp_tw_reuse = 1
 # 限制core dump
 kernel.core_uses_pid = 1
 
-# 启用ExecShield保护
-kernel.exec-shield = 1
+# 启用地址空间随机化(ASLR)
 kernel.randomize_va_space = 2
 
 # 限制访问内核日志
@@ -214,15 +228,72 @@ vm.overcommit_memory = 1
 EOF
 
     # 替换时间戳
-    sed -i "s/AUTO_TIMESTAMP/$(date '+%Y-%m-%d %H:%M:%S')/" "$SYSCTL_CONFIG"
+    sed -i "s/AUTO_TIMESTAMP/$(date '+%Y-%m-%d %H:%M:%S')/" "$raw_config"
 
-    # 应用配置
-    if sysctl -p "$SYSCTL_CONFIG" >/dev/null 2>&1; then
+    # 输出系统版本信息，便于定位兼容性问题
+    if [ -f /etc/os-release ]; then
+        # shellcheck source=/dev/null
+        . /etc/os-release
+        log_info "检测到系统: ${PRETTY_NAME:-$NAME $VERSION_ID}"
+    fi
+
+    # 先按当前内核实际支持的键过滤，提升跨版本兼容性
+    if sysctl -a -N > "$supported_keys" 2>/dev/null; then
+        : > "$filtered_config"
+
+        while IFS= read -r line || [ -n "$line" ]; do
+            # 保留注释和空行
+            if [[ "$line" =~ ^[[:space:]]*# ]] || [[ -z "${line//[[:space:]]/}" ]]; then
+                echo "$line" >> "$filtered_config"
+                continue
+            fi
+
+            # 非 key=value 格式直接保留
+            if [[ "$line" != *"="* ]]; then
+                echo "$line" >> "$filtered_config"
+                continue
+            fi
+
+            local key="${line%%=*}"
+            key="${key#"${key%%[![:space:]]*}"}"
+            key="${key%"${key##*[![:space:]]}"}"
+            ((total_keys++))
+
+            if grep -Fxq "$key" "$supported_keys"; then
+                echo "$line" >> "$filtered_config"
+            else
+                ((skipped++))
+                log_warning "当前内核不支持参数，已跳过: $key"
+            fi
+        done < "$raw_config"
+
+        if [ "$skipped" -gt 0 ]; then
+            log_info "已跳过 $skipped/$total_keys 个不兼容内核参数"
+        fi
+    else
+        log_warning "无法读取内核参数列表，使用原始配置继续"
+        cp "$raw_config" "$filtered_config"
+    fi
+
+    if ! cp "$filtered_config" "$SYSCTL_CONFIG"; then
+        log_error "写入内核参数配置文件失败: $SYSCTL_CONFIG"
+        rm -f "$raw_config" "$filtered_config" "$supported_keys"
+        return 1
+    fi
+
+    # 应用配置(-e: 忽略不存在的键，兼容不同内核版本/发行版)
+    if sysctl -e -p "$SYSCTL_CONFIG" >/dev/null 2>&1; then
         log_success "内核参数已配置"
         HARDENING_ITEMS+=("kernel-parameters")
+        rm -f "$raw_config" "$filtered_config" "$supported_keys"
         return 0
     else
         log_error "应用内核参数失败"
+        # 输出详细错误，便于定位具体失败的参数
+        while IFS= read -r line; do
+            [ -n "$line" ] && log_error "$line"
+        done < <(sysctl -p "$SYSCTL_CONFIG" 2>&1)
+        rm -f "$raw_config" "$filtered_config" "$supported_keys"
         return 1
     fi
 }

@@ -39,7 +39,7 @@ show_main_menu() {
     printf "  %s. >> 一键安装全部应用\n" "${BOLD}11${NC}"
     printf "  %s. [] 安装Docker\n" "${BOLD}12${NC}"
     printf "  %s. [] 安装Nginx Proxy Manager\n" "${BOLD}13${NC}"
-    printf "  %s. [] 安装3x-ui\n" "${BOLD}14${NC}"
+    printf "  %s. [] 安装s-ui\n" "${BOLD}14${NC}"
     printf "\n"
     printf "%s\n" "${YELLOW}[系统管理]${NC}"
     printf "  %s. [] 查看服务状态\n" "${BOLD}21${NC}"
@@ -66,7 +66,7 @@ show_uninstall_menu() {
 
   ${BOLD}1${NC}. Docker
   ${BOLD}2${NC}. Nginx Proxy Manager
-  ${BOLD}3${NC}. 3x-ui
+  ${BOLD}3${NC}. s-ui
 
   ${BOLD}0${NC}. 返回主菜单
 
