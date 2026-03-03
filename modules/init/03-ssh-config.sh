@@ -62,6 +62,7 @@ install() {
     else
         set_local_state "SSH_LOGIN_MODE" "create-user" || true
     fi
+    set_local_state "SSH_KEY_PATH" "~/.ssh/${CONFIGURED_USER}_ed25519" || true
     log_success "已选择用户: $username"
 
     # 步骤2: 设置SSH端口
@@ -77,6 +78,7 @@ install() {
         return 1
     fi
     CONFIGURED_PORT="$ssh_port"
+    set_local_state "SSH_PORT" "$CONFIGURED_PORT" || true
     log_success "SSH端口: $ssh_port"
 
     # 步骤3: 准备SSH密钥目录

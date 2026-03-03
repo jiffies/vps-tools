@@ -76,6 +76,53 @@ resolve_tunnel_user() {
     done
 }
 
+is_valid_ssh_port() {
+    local port="$1"
+    [[ "$port" =~ ^[0-9]+$ ]] && [ "$port" -ge 1 ] && [ "$port" -le 65535 ]
+}
+
+resolve_tunnel_port() {
+    local port
+    port=$(get_local_state "SSH_PORT" 2>/dev/null || true)
+
+    if [ -z "$port" ] && [ -f /var/log/vps-tools/init-03-ssh-config.flag ]; then
+        port=$(grep "^Port:" /var/log/vps-tools/init-03-ssh-config.flag | cut -d: -f2 | tr -d ' ')
+    fi
+
+    if is_valid_ssh_port "$port"; then
+        echo "$port"
+        return 0
+    fi
+
+    # 没有保存端口时提示输入并保存
+    while true; do
+        printf "${BLUE}请输入SSH端口 [默认22]: ${NC}"
+        read -r port
+        port=${port:-22}
+
+        if is_valid_ssh_port "$port"; then
+            set_local_state "SSH_PORT" "$port" || true
+            echo "$port"
+            return 0
+        fi
+
+        log_error "端口无效: $port"
+    done
+}
+
+resolve_tunnel_key_path() {
+    local ssh_user="$1"
+    local key_path
+    key_path=$(get_local_state "SSH_KEY_PATH" 2>/dev/null || true)
+
+    if [ -z "$key_path" ]; then
+        key_path="~/.ssh/${ssh_user}_ed25519"
+    fi
+
+    set_local_state "SSH_KEY_PATH" "$key_path" || true
+    echo "$key_path"
+}
+
 # ============ 安装函数 ============
 install() {
     log_info "开始安装 $MODULE_NAME..."
@@ -176,8 +223,12 @@ status() {
 show_post_install_info() {
     local ip
     local ssh_user
+    local ssh_port
+    local ssh_key_path
     ip=$(get_server_ip)
     ssh_user=$(resolve_tunnel_user)
+    ssh_port=$(resolve_tunnel_port)
+    ssh_key_path=$(resolve_tunnel_key_path "$ssh_user")
 
     cat << EOF
 
@@ -195,9 +246,9 @@ ${YELLOW}${BOLD}提示:${NC}
   请使用 's-ui' 命令查看面板访问地址和凭据
 
 ${BOLD}本地SSH转发(避免明文访问HTTP后台):${NC}
-  ssh -L 2095:127.0.0.1:2095 ${ssh_user}@${ip}
+  ssh -L 2095:127.0.0.1:2095 -p ${ssh_port} -i ${ssh_key_path} ${ssh_user}@${ip}
   http://127.0.0.1:2095/app/
-  (如果与你环境不一致,请把命令中的用户名和IP替换成实际值)
+  (如果与你环境不一致,请把用户名/IP/端口/密钥路径替换成实际值)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
