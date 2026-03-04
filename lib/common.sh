@@ -32,6 +32,8 @@ fi
 LOG_FILE="${LOG_FILE:-/var/log/vps-tools.log}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STATE_FILE="${STATE_FILE:-/var/log/vps-tools/runtime-state.conf}"
+AUTO_INSTALL_MISSING_TOOLS="${AUTO_INSTALL_MISSING_TOOLS:-1}"
+AUTO_INSTALL_APT_UPDATED=0
 
 # ============ 日志函数 ============
 log_info() {
@@ -317,21 +319,133 @@ check_command() {
     command -v "$1" &> /dev/null
 }
 
-require_command() {
-    local cmd=$1
-    local package=${2:-$1}
+command_package_name() {
+    local cmd="$1"
+    case "$cmd" in
+        ping) echo "iputils-ping" ;;
+        netstat|ifconfig) echo "net-tools" ;;
+        lsb_release) echo "lsb-release" ;;
+        gpg) echo "gnupg" ;;
+        fail2ban-client) echo "fail2ban" ;;
+        ssh-keygen) echo "openssh-client" ;;
+        usermod|userdel|groupadd|groupmod|groupdel) echo "passwd" ;;
+        *) echo "$cmd" ;;
+    esac
+}
+
+apt_update_once() {
+    if [ "$AUTO_INSTALL_APT_UPDATED" = "1" ]; then
+        return 0
+    fi
+
+    if ! apt-get update -qq; then
+        return 1
+    fi
+
+    AUTO_INSTALL_APT_UPDATED=1
+    return 0
+}
+
+auto_install_command() {
+    local cmd="$1"
+    local package_override="$2"
+    local package=""
+
+    if [ -z "$cmd" ]; then
+        return 1
+    fi
+
+    if check_command "$cmd"; then
+        return 0
+    fi
+
+    if [ "${AUTO_INSTALL_MISSING_TOOLS:-1}" != "1" ]; then
+        return 1
+    fi
+
+    if ! command -v apt-get >/dev/null 2>&1; then
+        log_error "缺少 apt-get,无法自动安装命令: $cmd"
+        return 1
+    fi
+
+    if [ -n "$package_override" ]; then
+        package="$package_override"
+    else
+        package="$(command_package_name "$cmd")"
+    fi
+
+    log_warning "检测到命令缺失: $cmd,尝试自动安装包: $package"
+
+    if ! apt_update_once; then
+        log_error "apt-get update 失败,无法安装 $package"
+        return 1
+    fi
+
+    if ! DEBIAN_FRONTEND=noninteractive apt-get install -y "$package"; then
+        log_error "自动安装失败: $package (命令: $cmd)"
+        return 1
+    fi
 
     if ! check_command "$cmd"; then
-        log_error "需要安装 $cmd"
-        if ask_yes_no "是否现在安装 $package?"; then
-            apt-get update -qq
-            apt-get install -y "$package"
-            return $?
-        else
+        log_error "安装完成但仍未找到命令: $cmd"
+        return 1
+    fi
+
+    log_success "命令已就绪: $cmd"
+    return 0
+}
+
+require_command() {
+    local cmd=$1
+    local package=${2:-}
+
+    if ! auto_install_command "$cmd" "$package"; then
+        log_error "缺少命令: $cmd"
+        return 1
+    fi
+
+    return 0
+}
+
+ensure_commands() {
+    local cmd
+    for cmd in "$@"; do
+        if ! require_command "$cmd"; then
             return 1
         fi
-    fi
+    done
     return 0
+}
+
+command_not_found_handle() {
+    local cmd="$1"
+    shift || true
+
+    if [ "${AUTO_INSTALL_MISSING_TOOLS:-1}" != "1" ]; then
+        printf "%s: command not found\n" "$cmd" >&2
+        return 127
+    fi
+
+    if [ -z "$cmd" ] || [[ "$cmd" == */* ]]; then
+        printf "%s: command not found\n" "$cmd" >&2
+        return 127
+    fi
+
+    if [ "${__AUTO_INSTALLING_CMD:-0}" = "1" ]; then
+        printf "%s: command not found\n" "$cmd" >&2
+        return 127
+    fi
+
+    __AUTO_INSTALLING_CMD=1
+    if auto_install_command "$cmd"; then
+        __AUTO_INSTALLING_CMD=0
+        "$cmd" "$@"
+        return $?
+    fi
+    __AUTO_INSTALLING_CMD=0
+
+    log_error "命令不存在且自动安装失败: $cmd"
+    return 127
 }
 
 check_package_installed() {
@@ -370,12 +484,44 @@ service_enabled() {
 
 # ============ 网络工具 ============
 check_internet() {
-    if ping -c 1 -W 2 8.8.8.8 &>/dev/null || ping -c 1 -W 2 1.1.1.1 &>/dev/null; then
-        return 0
-    else
-        log_error "无法连接到互联网"
-        return 1
+    # 优先使用HTTP探测，避免因云环境禁用ICMP导致误判
+    if command -v curl &>/dev/null; then
+        if curl -fsS --max-time 5 https://deb.debian.org/ >/dev/null 2>&1 || \
+           curl -fsS --max-time 5 https://archive.ubuntu.com/ >/dev/null 2>&1 || \
+           curl -fsS --max-time 5 https://security.ubuntu.com/ >/dev/null 2>&1; then
+            return 0
+        fi
     fi
+
+    if command -v wget &>/dev/null; then
+        if wget -q --spider --timeout=5 https://deb.debian.org/ >/dev/null 2>&1 || \
+           wget -q --spider --timeout=5 https://archive.ubuntu.com/ >/dev/null 2>&1 || \
+           wget -q --spider --timeout=5 https://security.ubuntu.com/ >/dev/null 2>&1; then
+            return 0
+        fi
+    fi
+
+    # 无需额外依赖的TCP探测
+    if command -v timeout &>/dev/null; then
+        if timeout 5 bash -c "echo >/dev/tcp/deb.debian.org/80" >/dev/null 2>&1 || \
+           timeout 5 bash -c "echo >/dev/tcp/archive.ubuntu.com/80" >/dev/null 2>&1; then
+            return 0
+        fi
+    else
+        if bash -c "echo >/dev/tcp/deb.debian.org/80" >/dev/null 2>&1 || \
+           bash -c "echo >/dev/tcp/archive.ubuntu.com/80" >/dev/null 2>&1; then
+            return 0
+        fi
+    fi
+
+    # ping 作为兜底，且仅在命令存在时执行
+    if command -v ping &>/dev/null; then
+        if ping -c 1 -W 2 8.8.8.8 &>/dev/null || ping -c 1 -W 2 1.1.1.1 &>/dev/null; then
+            return 0
+        fi
+    fi
+
+    return 1
 }
 
 wait_for_port() {
