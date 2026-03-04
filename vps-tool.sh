@@ -16,7 +16,23 @@ source "$SCRIPT_DIR/lib/module-loader.sh"
 VERSION="2.0"
 CONFIG_DIR="$SCRIPT_DIR/config"
 PRESET_DIR="$CONFIG_DIR/presets"
-INIT_USE_ROOT="false"
+INIT_SKIP_CREATE_USER="false"
+
+resolve_current_non_root_user() {
+    local current_user=""
+
+    if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ] && id "$SUDO_USER" &>/dev/null; then
+        current_user="$SUDO_USER"
+    else
+        local login_user
+        login_user="$(logname 2>/dev/null || true)"
+        if [ -n "$login_user" ] && [ "$login_user" != "root" ] && id "$login_user" &>/dev/null; then
+            current_user="$login_user"
+        fi
+    fi
+
+    echo "$current_user"
+}
 
 # ============ 初始化 ============
 initialize() {
@@ -40,8 +56,10 @@ initialize() {
 select_init_login_mode() {
     local saved_mode
     local saved_user
+    local current_user
     saved_mode="$(get_local_state "SSH_LOGIN_MODE" 2>/dev/null || true)"
     saved_user="$(get_local_state "SSH_LOGIN_USER" 2>/dev/null || true)"
+    current_user="$(resolve_current_non_root_user)"
 
     echo
     print_separator "─" 60
@@ -51,25 +69,41 @@ select_init_login_mode() {
     fi
     echo "  1. 使用 root (快速,不创建新用户)"
     echo "  2. 创建新用户名 (更安全,推荐)"
+    if [ -n "$current_user" ]; then
+        echo "  3. 使用当前非root用户名 (${current_user})"
+    else
+        echo "  3. 使用当前非root用户名 (未检测到,不可用)"
+    fi
     print_separator "─" 60
 
     local choice
     while true; do
-        printf "${BLUE}请选择 [1-2]: ${NC}"
+        printf "${BLUE}请选择 [1-3]: ${NC}"
         read -r choice
         case "$choice" in
             1)
-                INIT_USE_ROOT="true"
+                INIT_SKIP_CREATE_USER="true"
                 set_local_state "SSH_LOGIN_MODE" "root" || true
                 set_local_state "SSH_LOGIN_USER" "root" || true
                 log_warning "已选择 root 作为登录用户"
                 return 0
                 ;;
             2)
-                INIT_USE_ROOT="false"
+                INIT_SKIP_CREATE_USER="false"
                 set_local_state "SSH_LOGIN_MODE" "create-user" || true
                 set_local_state "SSH_LOGIN_USER" "" || true
                 log_info "已选择创建新用户"
+                return 0
+                ;;
+            3)
+                if [ -z "$current_user" ]; then
+                    log_error "未检测到可用的当前非root用户,请改选 1 或 2"
+                    continue
+                fi
+                INIT_SKIP_CREATE_USER="true"
+                set_local_state "SSH_LOGIN_MODE" "create-user" || true
+                set_local_state "SSH_LOGIN_USER" "$current_user" || true
+                log_info "已选择当前非root用户: $current_user"
                 return 0
                 ;;
             *)
@@ -82,7 +116,9 @@ select_init_login_mode() {
 # ============ 应用安装登录用户策略 ============
 select_install_login_mode() {
     local saved_user
+    local current_user
     saved_user="$(get_local_state "SSH_LOGIN_USER" 2>/dev/null || true)"
+    current_user="$(resolve_current_non_root_user)"
 
     echo
     print_separator "─" 60
@@ -92,11 +128,16 @@ select_install_login_mode() {
     fi
     echo "  1. 使用 root"
     echo "  2. 创建新用户名并保存"
+    if [ -n "$current_user" ]; then
+        echo "  3. 使用当前非root用户名 (${current_user})"
+    else
+        echo "  3. 使用当前非root用户名 (未检测到,不可用)"
+    fi
     print_separator "─" 60
 
     local choice
     while true; do
-        printf "${BLUE}请选择 [1-2]: ${NC}"
+        printf "${BLUE}请选择 [1-3]: ${NC}"
         read -r choice
         case "$choice" in
             1)
@@ -117,6 +158,16 @@ select_install_login_mode() {
                     [ -n "$created_user" ] && set_local_state "SSH_LOGIN_USER" "$created_user" || true
                 fi
                 log_info "已保存登录用户: ${created_user:-未知}"
+                return 0
+                ;;
+            3)
+                if [ -z "$current_user" ]; then
+                    log_error "未检测到可用的当前非root用户,请改选 1 或 2"
+                    continue
+                fi
+                set_local_state "SSH_LOGIN_MODE" "create-user" || true
+                set_local_state "SSH_LOGIN_USER" "$current_user" || true
+                log_info "已保存登录用户: $current_user"
                 return 0
                 ;;
             *)
@@ -142,8 +193,8 @@ run_init_all() {
         "01-system-update"
     )
 
-    # root模式下跳过“创建用户”步骤
-    if [ "$INIT_USE_ROOT" != "true" ]; then
+    # 仅在“创建新用户名”策略下执行“创建用户”步骤
+    if [ "$INIT_SKIP_CREATE_USER" != "true" ]; then
         modules+=("02-create-user")
     fi
 
