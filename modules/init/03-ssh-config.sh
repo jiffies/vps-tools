@@ -376,6 +376,12 @@ EOF
 
 # ============ 测试SSH配置 ============
 test_ssh_config() {
+    # 确保权限分离目录存在 (Ubuntu 22.04+某些环境下可能缺失)
+    if [ ! -d /run/sshd ]; then
+        mkdir -p /run/sshd
+        chmod 0755 /run/sshd
+    fi
+
     if /usr/sbin/sshd -t 2>&1; then
         log_success "SSH配置测试通过"
         return 0
