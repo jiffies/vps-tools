@@ -139,23 +139,52 @@ install() {
         return 1
     fi
 
-    log_step 1 4 "下载安装脚本"
-    local install_script="/tmp/s-ui_install.sh"
+    # 让用户指定版本 (留空则安装最新版)
+    local sui_version
+    printf "${BLUE}请输入s-ui版本号 (留空安装最新版, 例如v1.3.11): ${NC}"
+    read -r sui_version
 
-    if ! wget --no-check-certificate -O "$install_script" \
-        https://raw.githubusercontent.com/alireza0/s-ui/master/install.sh; then
-        log_error "下载安装脚本失败"
+    local download_branch="master"
+    local install_args=""
+
+    if [ -n "$sui_version" ]; then
+        # 确保版本号以v开头
+        if [[ ! "$sui_version" =~ ^v ]]; then
+            sui_version="v${sui_version}"
+        fi
+        download_branch="$sui_version"
+        install_args="$sui_version"
+        log_success "将安装版本: $sui_version"
+    else
+        sui_version="latest"
+        log_success "将安装最新版"
+    fi
+
+    log_step 1 4 "下载安装脚本 ($sui_version)"
+    local install_script="/tmp/s-ui_install.sh"
+    local download_url="https://raw.githubusercontent.com/alireza0/s-ui/${download_branch}/install.sh"
+
+    if ! curl -Ls -o "$install_script" "$download_url"; then
+        log_error "下载安装脚本失败 (版本: $sui_version)"
+        log_info "请检查版本号是否正确: https://github.com/alireza0/s-ui/releases"
+        return 1
+    fi
+
+    # 检查下载的文件是否有效 (非空且是shell脚本)
+    if [ ! -s "$install_script" ] || ! head -1 "$install_script" | grep -q "#!/"; then
+        log_error "下载的安装脚本无效,请检查版本号: $sui_version"
+        rm -f "$install_script"
         return 1
     fi
 
     log_step 2 4 "设置执行权限"
     chmod +x "$install_script"
 
-    log_step 3 4 "执行安装脚本"
+    log_step 3 4 "执行安装脚本 ($sui_version)"
     log_warning "安装过程需要交互,请按提示操作"
     echo
 
-    if ! bash "$install_script"; then
+    if ! bash "$install_script" $install_args; then
         log_error "安装失败"
         rm -f "$install_script"
         return 1
@@ -168,9 +197,12 @@ install() {
     mkdir -p "$UI_DIR"
     touch "$UI_FLAG"
     mkdir -p "$(dirname "$INSTALL_FLAG")"
-    date '+%Y-%m-%d %H:%M:%S' > "$INSTALL_FLAG"
+    cat > "$INSTALL_FLAG" <<EOF
+Version: $sui_version
+InstalledAt: $(date '+%Y-%m-%d %H:%M:%S')
+EOF
 
-    log_success "$MODULE_NAME 安装完成!"
+    log_success "$MODULE_NAME $sui_version 安装完成!"
     show_post_install_info
 
     return 0
