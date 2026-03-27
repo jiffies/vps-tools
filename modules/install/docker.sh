@@ -103,8 +103,7 @@ install() {
     if ! apt-get install -y \
         ca-certificates \
         curl \
-        gnupg \
-        lsb-release; then
+        gnupg; then
         log_error "安装依赖包失败"
         return 1
     fi
@@ -122,11 +121,11 @@ install() {
 
     chmod a+r /etc/apt/keyrings/docker.gpg
 
-    # 步骤4: 设置Docker仓库
+    # 步骤4: 设置Docker仓库 (使用 /etc/os-release 替代 lsb_release，兼容所有现代Linux)
     log_step 4 8 "设置Docker稳定版仓库"
     echo \
         "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
-        $(lsb_release -cs) stable" | \
+        $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
         tee /etc/apt/sources.list.d/docker.list > /dev/null
 
     # 步骤5: 再次更新包索引

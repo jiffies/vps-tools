@@ -387,32 +387,44 @@ test_ssh_config() {
 
 # ============ 重启SSH服务 ============
 restart_ssh_service() {
-    # 重启ssh.socket (如果存在且正在运行)
-    if [ -f "$SSH_SOCKET" ] && systemctl is-active ssh.socket >/dev/null 2>&1; then
+    local has_socket=false
+
+    # 检查是否使用socket激活模式
+    if [ -f "$SSH_SOCKET" ] && systemctl is-enabled ssh.socket >/dev/null 2>&1; then
+        has_socket=true
+    fi
+
+    if [ "$has_socket" = true ]; then
+        # socket激活模式: 先停止服务，再重启socket
+        systemctl stop ssh >/dev/null 2>&1 || true
         if ! systemctl restart ssh.socket; then
             log_error "重启ssh.socket失败"
             return 1
         fi
         log_success "ssh.socket已重启"
-    fi
-
-    # 重启SSH服务
-    if ! systemctl restart ssh; then
-        log_error "重启SSH服务失败"
-        return 1
+    else
+        # 传统模式: 直接重启SSH服务
+        if ! systemctl restart ssh; then
+            log_error "重启SSH服务失败"
+            return 1
+        fi
     fi
 
     # 等待服务启动
-    sleep 2
+    sleep 3
 
-    # 检查服务状态
-    if ! systemctl is-active ssh >/dev/null 2>&1; then
-        log_error "SSH服务未运行"
-        return 1
+    # 检查服务状态 (兼容socket激活模式)
+    if systemctl is-active ssh >/dev/null 2>&1; then
+        log_success "SSH服务已重启"
+        return 0
+    fi
+    if [ "$has_socket" = true ] && systemctl is-active ssh.socket >/dev/null 2>&1; then
+        log_success "SSH服务已重启 (socket激活模式)"
+        return 0
     fi
 
-    log_success "SSH服务已重启"
-    return 0
+    log_error "SSH服务未运行"
+    return 1
 }
 
 # ============ 回滚配置 ============
@@ -484,9 +496,11 @@ status() {
                 printf "  SSH服务: ${RED}已停止${NC}\n"
             fi
 
-            # 检查端口监听
-            if [ -n "$port" ] && netstat -tuln 2>/dev/null | grep -q ":$port "; then
+            # 检查端口监听 (使用ss，兼容所有现代Linux)
+            if [ -n "$port" ] && ss -tuln 2>/dev/null | grep -q ":$port "; then
                 printf "  端口监听: ${GREEN}正常${NC}\n"
+            elif [ -n "$port" ] && systemctl is-active ssh.socket >/dev/null 2>&1; then
+                printf "  端口监听: ${GREEN}正常 (socket激活模式)${NC}\n"
             else
                 printf "  端口监听: ${RED}异常${NC}\n"
             fi
@@ -498,20 +512,38 @@ status() {
 
 # ============ 验证安装 (内部函数) ============
 verify_installation() {
-    # 验证SSH服务运行
-    if ! systemctl is-active ssh >/dev/null 2>&1; then
+    # 验证SSH服务或socket运行
+    local ssh_active=false
+    if systemctl is-active ssh >/dev/null 2>&1; then
+        ssh_active=true
+    fi
+    if systemctl is-active ssh.socket >/dev/null 2>&1; then
+        ssh_active=true
+    fi
+    if [ "$ssh_active" = false ]; then
         log_error "SSH服务未运行"
         return 1
     fi
 
-    # 验证端口监听
+    # 验证端口监听 (使用ss，兼容所有现代Linux)
     sleep 2
-    if ! netstat -tuln 2>/dev/null | grep -q ":$CONFIGURED_PORT "; then
-        log_error "SSH端口 $CONFIGURED_PORT 未监听"
-        return 1
+    if ss -tuln 2>/dev/null | grep -q ":$CONFIGURED_PORT "; then
+        log_success "端口 $CONFIGURED_PORT 已监听"
+        return 0
     fi
 
-    return 0
+    # 在socket激活模式下，端口可能由ssh.socket管理
+    if systemctl is-active ssh.socket >/dev/null 2>&1; then
+        local socket_port
+        socket_port=$(systemctl show ssh.socket -p Listen 2>/dev/null | grep -oP '\d+' | head -1)
+        if [ "$socket_port" = "$CONFIGURED_PORT" ]; then
+            log_success "端口 $CONFIGURED_PORT 已通过socket激活模式监听"
+            return 0
+        fi
+    fi
+
+    log_error "SSH端口 $CONFIGURED_PORT 未监听"
+    return 1
 }
 
 # ============ 安装后信息 (可选) ============

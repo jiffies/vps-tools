@@ -120,8 +120,8 @@ detect_ssh_port() {
         return 0
     fi
 
-    # 从当前连接检测
-    local port=$(netstat -tuln 2>/dev/null | grep 'LISTEN' | grep ':22 ' | awk '{print $4}' | cut -d: -f2 | head -1)
+    # 从当前连接检测 (使用ss，兼容所有现代Linux)
+    local port=$(ss -tuln 2>/dev/null | grep 'LISTEN' | grep ':22 ' | awk '{print $4}' | rev | cut -d: -f1 | rev | head -1)
     if [ -n "$port" ]; then
         CONFIGURED_SSH_PORT="$port"
         return 0

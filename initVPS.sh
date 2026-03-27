@@ -39,7 +39,7 @@ read -p "是否要更新系统？(y/n): " do_update
 if [[ $do_update == "y" ]]; then
     echo ">>> 正在更新系统..."
     apt update && apt upgrade -y
-    apt install -y ufw fail2ban sudo vim net-tools
+    apt install -y ufw fail2ban sudo vim
     echo "系统更新完成"
 fi
 
@@ -221,7 +221,7 @@ EOF
     # 验证端口监听状态
     sleep 2
     echo "检查SSH端口状态："
-    netstat -tuln | grep ":$ssh_port "
+    ss -tuln | grep ":$ssh_port "
     echo "SSH配置完成"
 fi
 
