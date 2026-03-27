@@ -221,7 +221,7 @@ run_init_all() {
 run_install_all() {
     print_header "一键安装全部应用"
 
-    if ! confirm_action "一键安装全部应用" "将安装 Docker、Nginx Proxy Manager 和 s-ui"; then
+    if ! confirm_action "一键安装全部应用" "将安装 Docker、Nginx Proxy Manager、s-ui 和 Tailscale"; then
         return 1
     fi
 
@@ -233,6 +233,7 @@ run_install_all() {
         "docker"
         "nginx-proxy-manager"
         "s-ui"
+        "tailscale"
     )
 
     run_modules_batch "install" "${modules[@]}"
@@ -287,7 +288,7 @@ run_backup() {
 run_uninstall_menu() {
     while true; do
         show_uninstall_menu
-        choice=$(read_menu_choice "请选择" "[0-3]")
+        choice=$(read_menu_choice "请选择" "[0-4]")
 
         case $choice in
             0)
@@ -301,6 +302,9 @@ run_uninstall_menu() {
                 ;;
             3)
                 run_module "install" "s-ui" "uninstall"
+                ;;
+            4)
+                run_module "install" "tailscale" "uninstall"
                 ;;
             *)
                 log_error "无效选项: $choice"
@@ -523,6 +527,9 @@ main_loop() {
                 ;;
             14)
                 run_module "install" "s-ui" "install"
+                ;;
+            15)
+                run_module "install" "tailscale" "install"
                 ;;
 
             # 系统管理
