@@ -617,6 +617,40 @@ EOF
     chmod 755 "$CADDY_DIR" "$CADDY_APPS_DIR"
 }
 
+ensure_caddy_log_file() {
+    local log_file="$1"
+
+    mkdir -p "$CADDY_LOG_DIR" || return 1
+
+    if id caddy >/dev/null 2>&1; then
+        chown caddy:caddy "$CADDY_LOG_DIR" 2>/dev/null || true
+        chmod 755 "$CADDY_LOG_DIR" 2>/dev/null || true
+    fi
+
+    touch "$log_file" || return 1
+
+    if id caddy >/dev/null 2>&1; then
+        chown caddy:caddy "$log_file" 2>/dev/null || true
+        chmod 640 "$log_file" 2>/dev/null || true
+    fi
+}
+
+repair_caddy_log_permissions() {
+    mkdir -p "$CADDY_LOG_DIR" || return 1
+
+    if ! id caddy >/dev/null 2>&1; then
+        return 0
+    fi
+
+    chown caddy:caddy "$CADDY_LOG_DIR" 2>/dev/null || true
+    chmod 755 "$CADDY_LOG_DIR" 2>/dev/null || true
+
+    if find "$CADDY_LOG_DIR" -maxdepth 1 -type f -name "*.log" -print -quit 2>/dev/null | grep -q .; then
+        find "$CADDY_LOG_DIR" -maxdepth 1 -type f -name "*.log" -exec chown caddy:caddy {} + 2>/dev/null || true
+        find "$CADDY_LOG_DIR" -maxdepth 1 -type f -name "*.log" -exec chmod 640 {} + 2>/dev/null || true
+    fi
+}
+
 write_main_caddyfile() {
     local email_line=""
 
@@ -686,6 +720,8 @@ write_sui_app_caddyfile() {
     local auth_block=""
     local subscription_path_matcher
 
+    ensure_caddy_log_file "$CADDY_LOG_DIR/s-ui-access.log" || return 1
+
     if [ "$CADDY_ENABLE_BASIC_AUTH" = "true" ]; then
         auth_block="        basic_auth argon2id {
             $CADDY_AUTH_USER $CADDY_AUTH_HASH
@@ -731,6 +767,8 @@ BasicAuth: $CADDY_ENABLE_BASIC_AUTH"
 write_nezha_app_caddyfile() {
     local app_name="$1"
     local app_file="$CADDY_APPS_DIR/${app_name}.caddy"
+
+    ensure_caddy_log_file "$CADDY_LOG_DIR/${app_name}-access.log" || return 1
 
     cat > "$app_file" <<EOF
 $CADDY_DOMAIN {
@@ -782,6 +820,8 @@ EOF
 write_custom_app_caddyfile() {
     local app_name="$1"
     local app_file="$CADDY_APPS_DIR/${app_name}.caddy"
+
+    ensure_caddy_log_file "$CADDY_LOG_DIR/${app_name}-access.log" || return 1
 
     cat > "$app_file" <<EOF
 $CADDY_DOMAIN {
@@ -997,6 +1037,7 @@ verify_caddy_service() {
 
 reload_caddy_config() {
     validate_caddyfile || return 1
+    repair_caddy_log_permissions || return 1
     start_or_reload_caddy || return 1
     return 0
 }
@@ -1030,6 +1071,7 @@ install_or_update_caddy_core() {
     log_step 6 8 "生成 Caddy 主配置"
     write_main_caddyfile || return 1
     validate_caddyfile || return 1
+    repair_caddy_log_permissions || return 1
 
     log_step 7 8 "配置防火墙"
     configure_ufw_for_caddy || return 1
