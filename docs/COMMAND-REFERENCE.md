@@ -775,11 +775,11 @@ sudo ./modules/install/caddy.sh reload
 # Dashboard默认入口
 https://YOUR_DOMAIN:8443/app/
 
-# 订阅入口默认不公开;如手动选择公开,脚本会生成长随机路径
-https://YOUR_DOMAIN:8443/sub-随机路径
+# 订阅入口默认不公开;如手动选择公开,脚本会生成长随机前缀
+https://YOUR_DOMAIN:8443/随机前缀/sub
 
-# 外部随机路径会由 Caddy 替换到 s-ui 内部 /sub/
-# 例如: /sub-a1b2c3/client-id -> 127.0.0.1:2096/sub/client-id
+# 外部随机前缀会由 Caddy 移除,后面的 /sub/... 保持给 s-ui
+# 例如: /a1b2c3/sub/client-id -> 127.0.0.1:2096/sub/client-id
 
 # 检验通过后会打印 Dashboard 入口和订阅入口
 sudo ./modules/install/caddy.sh verify-sui YOUR_APP_NAME

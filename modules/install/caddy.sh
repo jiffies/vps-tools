@@ -11,7 +11,7 @@
 
 # ============ 模块元数据 ============
 MODULE_NAME="Caddy"
-MODULE_VERSION="1.2.3"
+MODULE_VERSION="1.3.0"
 MODULE_DEPS=""
 MODULE_CATEGORY="install"
 MODULE_DESC="安装 Caddy 并管理 8443 应用 HTTPS 入口"
@@ -229,7 +229,21 @@ generate_subscription_path() {
         token="$(date +%s)-$RANDOM$RANDOM"
     fi
 
-    echo "/sub-$token"
+    echo "/$token"
+}
+
+join_path_prefix() {
+    local left="$1"
+    local right="$2"
+
+    left="$(normalize_path_prefix "$left")"
+    right="$(normalize_path_prefix "$right")"
+
+    if [ "$left" = "/" ]; then
+        echo "$right"
+    else
+        echo "${left}${right}"
+    fi
 }
 
 format_caddy_https_url() {
@@ -412,8 +426,8 @@ collect_sui_proxy_config() {
 
 ${YELLOW}${BOLD}订阅入口安全提示:${NC}
   默认只通过 Caddy 公开 s-ui Dashboard。
-  订阅入口如果公开,应使用长随机路径;多数客户端不适合再套 Basic Auth。
-  Caddy 会把外部随机路径自动改写到 s-ui 内部 ${DEFAULT_SUI_UPSTREAM_SUBSCRIPTION_PATH}/,s-ui 面板默认路径可保持不变。
+  订阅入口如果公开,应使用长随机前缀;多数客户端不适合再套 Basic Auth。
+  Caddy 会移除外部随机前缀,让后面的 ${DEFAULT_SUI_UPSTREAM_SUBSCRIPTION_PATH}/订阅ID 原样进入 s-ui。
 
 EOF
 
@@ -433,7 +447,7 @@ EOF
 
         default_subscription_path="$(generate_subscription_path)"
         while true; do
-            printf "${BLUE}订阅公网路径 [默认${default_subscription_path}]: ${NC}"
+            printf "${BLUE}订阅公网随机前缀 [默认${default_subscription_path},最终路径为 前缀${DEFAULT_SUI_UPSTREAM_SUBSCRIPTION_PATH}/订阅ID]: ${NC}"
             read -r path
             path=${path:-$default_subscription_path}
             path="$(normalize_path_prefix "$path")"
@@ -443,7 +457,7 @@ EOF
                 break
             fi
 
-            log_error "路径无效,示例: /sub-a1b2c3d4"
+            log_error "路径无效,示例: /a1b2c3d4"
         done
     fi
 
@@ -892,6 +906,7 @@ write_sui_app_caddyfile() {
     local subscription_block=""
     local subscription_state="Subscription: disabled"
     local subscription_path_matcher
+    local public_subscription_base
 
     ensure_caddy_log_file "$CADDY_LOG_DIR/s-ui-access.log" || return 1
 
@@ -904,15 +919,17 @@ write_sui_app_caddyfile() {
 
     if [ "$CADDY_ENABLE_SUBSCRIPTION" = "true" ]; then
         subscription_path_matcher="${CADDY_SUBSCRIPTION_PATH} ${CADDY_SUBSCRIPTION_PATH}/*"
+        public_subscription_base="$(join_path_prefix "$CADDY_SUBSCRIPTION_PATH" "$CADDY_UPSTREAM_SUBSCRIPTION_PATH")"
         subscription_block="    @subscription path $subscription_path_matcher
     handle @subscription {
-        uri replace $CADDY_SUBSCRIPTION_PATH $CADDY_UPSTREAM_SUBSCRIPTION_PATH 1
+        uri strip_prefix $CADDY_SUBSCRIPTION_PATH
         reverse_proxy 127.0.0.1:$CADDY_SUBSCRIPTION_PORT
     }
 
 "
-        subscription_state="Subscription: $CADDY_SUBSCRIPTION_PATH -> 127.0.0.1:$CADDY_SUBSCRIPTION_PORT
-SubscriptionRewrite: $CADDY_SUBSCRIPTION_PATH -> $CADDY_UPSTREAM_SUBSCRIPTION_PATH"
+        subscription_state="Subscription: $public_subscription_base -> 127.0.0.1:$CADDY_SUBSCRIPTION_PORT
+SubscriptionPrefix: $CADDY_SUBSCRIPTION_PATH
+SubscriptionRewrite: strip-prefix $CADDY_SUBSCRIPTION_PATH"
     fi
 
     cat > "$app_file" <<EOF
@@ -1412,15 +1429,15 @@ repair_sui_subscription_proxy() {
 ${YELLOW}${BOLD}修复说明:${NC}
   当前会重建 $app_name 的 Caddy 片段:
   - Dashboard 继续反代到 127.0.0.1:$CADDY_DASHBOARD_PORT
-  - 外部订阅路径改为长随机路径
-  - Caddy 自动把外部随机路径替换为 s-ui 内部 $CADDY_UPSTREAM_SUBSCRIPTION_PATH/
+  - 外部订阅路径改为 随机前缀$CADDY_UPSTREAM_SUBSCRIPTION_PATH/订阅ID
+  - Caddy 自动移除随机前缀,保留 s-ui 内部 $CADDY_UPSTREAM_SUBSCRIPTION_PATH/订阅ID
   - 2096 仍然只作为本机后端端口,不需要公网开放
 
 EOF
 
     default_subscription_path="$(generate_subscription_path)"
     while true; do
-        printf "${BLUE}新的订阅公网路径 [默认%s]: ${NC}" "$default_subscription_path"
+        printf "${BLUE}新的订阅公网随机前缀 [默认%s,最终路径为 前缀%s/订阅ID]: ${NC}" "$default_subscription_path" "$CADDY_UPSTREAM_SUBSCRIPTION_PATH"
         read -r path
         path=${path:-$default_subscription_path}
         path="$(normalize_path_prefix "$path")"
@@ -1430,7 +1447,7 @@ EOF
             break
         fi
 
-        log_error "路径无效,示例: /sub-a1b2c3d4"
+        log_error "路径无效,示例: /a1b2c3d4"
     done
 
     if [ "$current_basic_auth" = "true" ]; then
@@ -1467,8 +1484,8 @@ verify_sui_caddy_setup() {
     local subscription_path
     local subscription_upstream
     local subscription_port
+    local subscription_prefix
     local subscription_rewrite
-    local subscription_rewrite_target
     local state_https_port
     local dashboard_url
     local subscription_url
@@ -1568,6 +1585,7 @@ EOF
     domain="$(read_state_value "$state_file" "Domain")"
     dashboard_upstream="$(read_state_value "$state_file" "Upstream")"
     subscription_line="$(read_state_value "$state_file" "Subscription")"
+    subscription_prefix="$(read_state_value "$state_file" "SubscriptionPrefix")"
     subscription_rewrite="$(read_state_value "$state_file" "SubscriptionRewrite")"
     state_https_port="$(read_state_value "$state_file" "HTTPSPort")"
 
@@ -1603,17 +1621,30 @@ EOF
         subscription_path="$(parse_subscription_path_from_line "$subscription_line" 2>/dev/null || true)"
         subscription_upstream="$(parse_subscription_upstream_from_line "$subscription_line" 2>/dev/null || true)"
         subscription_port="$(extract_port_from_upstream "$subscription_upstream" 2>/dev/null || true)"
-        subscription_rewrite_target="${subscription_rewrite##*-> }"
 
         if is_valid_path_prefix "$subscription_path"; then
-            CADDY_SUBSCRIPTION_PATH="$subscription_path"
             verify_ok "订阅公网路径存在: $subscription_path"
         else
             verify_fail "订阅公网路径无效或缺失"
         fi
 
-        if [ "$subscription_path" = "$DEFAULT_SUBSCRIPTION_PATH" ] || [ "$subscription_path" = "${DEFAULT_SUBSCRIPTION_PATH}/" ]; then
-            verify_fail "订阅公网路径仍是默认短路径 $DEFAULT_SUBSCRIPTION_PATH,请运行 repair-sui-sub 生成随机路径"
+        if is_valid_path_prefix "$subscription_prefix"; then
+            CADDY_SUBSCRIPTION_PATH="$subscription_prefix"
+            verify_ok "订阅公网随机前缀存在: $subscription_prefix"
+        else
+            CADDY_SUBSCRIPTION_PATH="$subscription_path"
+            verify_fail "缺少 SubscriptionPrefix,请运行 repair-sui-sub 重建入口"
+        fi
+
+        if [ "$subscription_path" = "$DEFAULT_SUBSCRIPTION_PATH" ] || [ "$subscription_path" = "${DEFAULT_SUBSCRIPTION_PATH}/" ] ||
+           [ "$subscription_prefix" = "$DEFAULT_SUBSCRIPTION_PATH" ] || [ "$subscription_prefix" = "${DEFAULT_SUBSCRIPTION_PATH}/" ]; then
+            verify_fail "订阅公网路径仍是默认短路径 $DEFAULT_SUBSCRIPTION_PATH,请运行 repair-sui-sub 生成随机前缀"
+        fi
+
+        if [ "$subscription_path" = "$(join_path_prefix "$CADDY_SUBSCRIPTION_PATH" "$DEFAULT_SUI_UPSTREAM_SUBSCRIPTION_PATH")" ]; then
+            verify_ok "订阅公网路径形态为 随机前缀$DEFAULT_SUI_UPSTREAM_SUBSCRIPTION_PATH/订阅ID"
+        else
+            verify_fail "订阅公网路径应为 ${CADDY_SUBSCRIPTION_PATH}${DEFAULT_SUI_UPSTREAM_SUBSCRIPTION_PATH},当前为 $subscription_path"
         fi
 
         if [ -n "$subscription_port" ]; then
@@ -1624,11 +1655,11 @@ EOF
             verify_fail "无法从状态记录解析订阅后端端口"
         fi
 
-        if [ "$subscription_rewrite_target" = "$DEFAULT_SUI_UPSTREAM_SUBSCRIPTION_PATH" ]; then
-            CADDY_UPSTREAM_SUBSCRIPTION_PATH="$subscription_rewrite_target"
-            verify_ok "订阅路径会替换到 s-ui 内部 $subscription_rewrite_target"
+        if [ "$subscription_rewrite" = "strip-prefix $CADDY_SUBSCRIPTION_PATH" ]; then
+            CADDY_UPSTREAM_SUBSCRIPTION_PATH="$DEFAULT_SUI_UPSTREAM_SUBSCRIPTION_PATH"
+            verify_ok "订阅路径会移除随机前缀并保留 s-ui 内部 $DEFAULT_SUI_UPSTREAM_SUBSCRIPTION_PATH"
         else
-            verify_fail "缺少 SubscriptionRewrite: $subscription_path -> $DEFAULT_SUI_UPSTREAM_SUBSCRIPTION_PATH"
+            verify_fail "缺少 SubscriptionRewrite: strip-prefix $CADDY_SUBSCRIPTION_PATH"
         fi
 
         if [ -f "$app_file" ]; then
@@ -1638,10 +1669,10 @@ EOF
                 verify_fail "Caddy 片段未反代订阅到 127.0.0.1:$CADDY_SUBSCRIPTION_PORT"
             fi
 
-            if grep -Fq "uri replace $CADDY_SUBSCRIPTION_PATH $CADDY_UPSTREAM_SUBSCRIPTION_PATH 1" "$app_file"; then
-                verify_ok "Caddy 片段已配置订阅路径替换"
+            if grep -Fq "uri strip_prefix $CADDY_SUBSCRIPTION_PATH" "$app_file"; then
+                verify_ok "Caddy 片段已配置订阅随机前缀剥离"
             else
-                verify_fail "Caddy 片段缺少订阅路径替换;请运行 repair-sui-sub 重建入口"
+                verify_fail "Caddy 片段缺少订阅随机前缀剥离;请运行 repair-sui-sub 重建入口"
             fi
         fi
     else
@@ -1734,7 +1765,7 @@ EOF
     echo
     if [ "$VERIFY_ERRORS" -eq 0 ]; then
         dashboard_url="$(format_caddy_https_url "$CADDY_DOMAIN" "/app/")"
-        subscription_url="$(format_caddy_https_url "$CADDY_DOMAIN" "$CADDY_SUBSCRIPTION_PATH")"
+        subscription_url="$(format_caddy_https_url "$CADDY_DOMAIN" "$(join_path_prefix "$CADDY_SUBSCRIPTION_PATH" "$CADDY_UPSTREAM_SUBSCRIPTION_PATH")")"
 
         cat << EOF
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1751,7 +1782,7 @@ ${BOLD}完整订阅链接格式:${NC}
   ${CYAN}${subscription_url}/<s-ui订阅ID>?format=json${NC}
   ${CYAN}${subscription_url}/<s-ui订阅ID>?format=clash${NC}
 
-${YELLOW}提示:${NC} 如果 s-ui 面板生成的是 /sub/<订阅ID>,把 /sub 替换成上面的随机订阅入口即可。
+${YELLOW}提示:${NC} 如果 s-ui 面板生成的是 /sub/<订阅ID>,在前面加上随机前缀即可。
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 EOF
         if [ "$VERIFY_WARNINGS" -gt 0 ]; then
@@ -1830,7 +1861,7 @@ list_caddy_apps() {
     for state in "$APPS_STATE_DIR"/*.conf; do
         [ -f "$state" ] || continue
         echo
-        grep -E "^(Name|Type|Domain|Upstream|Subscription|SubscriptionRewrite|BasicAuth|CloudflareMode|HTTPSPort|PublicPorts|CreatedAt):" "$state" | sed 's/^/  /'
+        grep -E "^(Name|Type|Domain|Upstream|Subscription|SubscriptionPrefix|SubscriptionRewrite|BasicAuth|CloudflareMode|HTTPSPort|PublicPorts|CreatedAt):" "$state" | sed 's/^/  /'
     done
     echo
 }
@@ -1889,7 +1920,7 @@ ${CYAN}================================================================${NC}
   ${BOLD}5${NC}. 查看已管理入口
   ${BOLD}6${NC}. 删除应用入口
   ${BOLD}7${NC}. 校验并重载 Caddy
-  ${BOLD}8${NC}. 修复 s-ui 订阅随机路径入口
+  ${BOLD}8${NC}. 修复 s-ui 订阅随机前缀入口
   ${BOLD}9${NC}. 检验 s-ui + Caddy 配置并打印入口
 
   ${BOLD}0${NC}. 返回主菜单
@@ -2057,14 +2088,16 @@ show_post_install_info() {
     local subscription_note="未公开"
     local subscription_upstream="未公开"
     local subscription_rewrite="未启用"
+    local subscription_public_base
     if [ "$CADDY_ENABLE_BASIC_AUTH" = "true" ]; then
         auth_note="已启用,用户名: $CADDY_AUTH_USER"
     fi
     dashboard_url="$(format_caddy_https_url "$CADDY_DOMAIN" "/app/")"
     if [ "$CADDY_ENABLE_SUBSCRIPTION" = "true" ]; then
-        subscription_note="$(format_caddy_https_url "$CADDY_DOMAIN" "$CADDY_SUBSCRIPTION_PATH")"
+        subscription_public_base="$(join_path_prefix "$CADDY_SUBSCRIPTION_PATH" "$CADDY_UPSTREAM_SUBSCRIPTION_PATH")"
+        subscription_note="$(format_caddy_https_url "$CADDY_DOMAIN" "$subscription_public_base")"
         subscription_upstream="127.0.0.1:$CADDY_SUBSCRIPTION_PORT"
-        subscription_rewrite="$CADDY_SUBSCRIPTION_PATH -> $CADDY_UPSTREAM_SUBSCRIPTION_PATH"
+        subscription_rewrite="strip-prefix $CADDY_SUBSCRIPTION_PATH"
     fi
 
     cat << EOF

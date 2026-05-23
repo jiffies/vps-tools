@@ -75,8 +75,8 @@
   - 从Caddy官方下载接口安装最新版静态二进制
   - 创建systemd服务
   - 生成主 Caddyfile 并通过 `/etc/caddy/apps.d/*.caddy` 导入应用片段
-  - 支持 s-ui dashboard(默认2095),订阅入口默认不公开、可选长随机路径公开到2096
-  - 订阅入口自动将外部随机路径替换到 s-ui 内部 `/sub/`
+  - 支持 s-ui dashboard(默认2095),订阅入口默认不公开、可选长随机前缀公开到2096
+  - 订阅入口使用 `/随机前缀/sub/订阅ID`,Caddy 自动移除随机前缀并保留 s-ui 内部 `/sub/`
   - 提供 s-ui + Caddy 配置检验,成功后打印 Dashboard 和订阅入口
   - 支持 Nezha Dashboard(默认8008)和自定义应用反代
   - 引导用户确认域名 A 记录内容指向 VPS 公网 IP 且 Cloudflare 橙云已开启
