@@ -4,7 +4,7 @@
 
 ## ✨ 特性
 
-- **🎯 一键操作**: 一键初始化VPS或安装全部应用
+- **🎯 一键初始化**: 1号选项只配置新服务器,应用按需手动安装
 - **🧩 模块化设计**: 每个功能独立模块,易于扩展和维护
 - **🔐 安全优先**: 修复了所有已知安全问题
   - Caddy 适配 Cloudflare 橙云,通过 80/443 自动申请源站证书
@@ -54,10 +54,6 @@ chmod +x modules/**/*.sh
 
 # 一键初始化VPS
 ./vps-tool.sh --init
-
-# 一键安装全部应用
-./vps-tool.sh --install-all
-# 顺序: Docker -> s-ui -> Nezha -> Tailscale -> Caddy网关
 
 # 查看服务状态
 ./vps-tool.sh --status
@@ -240,6 +236,7 @@ echo "$(date '+%Y-%m-%d %H:%M:%S')" > "$INSTALL_FLAG"
 # - 配置Fail2Ban
 # - 配置防火墙
 # - 系统加固
+# 不会安装 Docker、s-ui、Nezha、Tailscale 或 Caddy
 ```
 
 ### 示例2: 配置Caddy公开访问应用
@@ -376,7 +373,7 @@ MIT License
 ## 💡 提示
 
 - 首次使用建议选择"一键初始化VPS"
-- 安装应用前确保系统已更新
+- 应用需要按菜单选项手动选择安装
 - 重要操作会要求二次确认
 - 所有操作都有日志记录
 - 卸载时可选择保留数据

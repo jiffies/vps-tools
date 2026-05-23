@@ -113,70 +113,6 @@ select_init_login_mode() {
     done
 }
 
-# ============ 应用安装登录用户策略 ============
-select_install_login_mode() {
-    local saved_user
-    local current_user
-    saved_user="$(get_local_state "SSH_LOGIN_USER" 2>/dev/null || true)"
-    current_user="$(resolve_current_non_root_user)"
-
-    echo
-    print_separator "─" 60
-    echo -e "${BOLD}s-ui访问建议使用哪个SSH用户?${NC}"
-    if [ -n "$saved_user" ]; then
-        echo -e "  当前保存用户: ${GREEN}${saved_user}${NC}"
-    fi
-    echo "  1. 使用 root"
-    echo "  2. 创建新用户名并保存"
-    if [ -n "$current_user" ]; then
-        echo "  3. 使用当前非root用户名 (${current_user})"
-    else
-        echo "  3. 使用当前非root用户名 (未检测到,不可用)"
-    fi
-    print_separator "─" 60
-
-    local choice
-    while true; do
-        printf "${BLUE}请选择 [1-3]: ${NC}"
-        read -r choice
-        case "$choice" in
-            1)
-                set_local_state "SSH_LOGIN_MODE" "root" || true
-                set_local_state "SSH_LOGIN_USER" "root" || true
-                log_info "已保存登录用户: root"
-                return 0
-                ;;
-            2)
-                if ! run_module "init" "02-create-user" "install"; then
-                    log_error "创建新用户失败,已取消一键安装"
-                    return 1
-                fi
-                local created_user
-                created_user="$(get_local_state "SSH_LOGIN_USER" 2>/dev/null || true)"
-                if [ -z "$created_user" ]; then
-                    created_user="$(head -n1 /var/log/vps-tools/init-02-create-user.flag 2>/dev/null)"
-                    [ -n "$created_user" ] && set_local_state "SSH_LOGIN_USER" "$created_user" || true
-                fi
-                log_info "已保存登录用户: ${created_user:-未知}"
-                return 0
-                ;;
-            3)
-                if [ -z "$current_user" ]; then
-                    log_error "未检测到可用的当前非root用户,请改选 1 或 2"
-                    continue
-                fi
-                set_local_state "SSH_LOGIN_MODE" "create-user" || true
-                set_local_state "SSH_LOGIN_USER" "$current_user" || true
-                log_info "已保存登录用户: $current_user"
-                return 0
-                ;;
-            *)
-                log_error "无效选项: $choice"
-                ;;
-        esac
-    done
-}
-
 # ============ 一键初始化VPS ============
 run_init_all() {
     print_header "一键初始化VPS"
@@ -212,38 +148,6 @@ run_init_all() {
         show_result "VPS初始化" "success" "所有步骤执行成功!"
     else
         show_result "VPS初始化" "error" "部分步骤执行失败,请查看日志"
-    fi
-
-    return $result
-}
-
-# ============ 一键安装全部应用 ============
-run_install_all() {
-    print_header "一键安装全部应用"
-
-    if ! confirm_action "一键安装全部应用" "将先安装 Docker、s-ui、Nezha、Tailscale,再安装/配置 Caddy 网关"; then
-        return 1
-    fi
-
-    if ! select_install_login_mode; then
-        return 1
-    fi
-
-    local modules=(
-        "docker"
-        "s-ui"
-        "nezha"
-        "tailscale"
-        "caddy"
-    )
-
-    run_modules_batch "install" "${modules[@]}"
-    local result=$?
-
-    if [ $result -eq 0 ]; then
-        show_result "应用安装" "success" "所有应用安装成功!"
-    else
-        show_result "应用安装" "error" "部分应用安装失败,请查看日志"
     fi
 
     return $result
@@ -524,9 +428,6 @@ main_loop() {
                 ;;
 
             # 应用安装
-            11)
-                run_install_all
-                ;;
             12)
                 run_module "install" "docker" "install"
                 ;;
@@ -591,7 +492,6 @@ VPS 一体化配置工具 v$VERSION
   -v, --version       显示版本信息
   -l, --list          列出所有可用模块
   --init              一键初始化VPS
-  --install-all       一键安装全部应用
   --status            显示所有服务状态
 
 示例:
@@ -612,10 +512,6 @@ EOF
             ;;
         --init)
             run_init_all
-            exit $?
-            ;;
-        --install-all)
-            run_install_all
             exit $?
             ;;
         --status)

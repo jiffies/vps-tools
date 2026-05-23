@@ -63,7 +63,7 @@
 #### 🐳 使用Docker部署应用
 1. 阅读 [DOCKER-UFW-INTEGRATION.md](DOCKER-UFW-INTEGRATION.md)
 2. 安装Docker (选项12)
-3. 安装应用 (选项13-16)
+3. 按需手动安装应用 (选项12-16)
 4. 使用 [ufw-docker 命令](COMMAND-REFERENCE.md#ufw-docker) 开放端口
 
 #### ❌ 遇到问题需要排查

@@ -36,7 +36,6 @@ show_main_menu() {
     printf "  %s.  [] 系统安全加固\n" "${BOLD}7${NC}"
     printf "\n"
     printf "%s\n" "${BLUE}[应用安装]${NC}"
-    printf "  %s. >> 一键安装全部应用\n" "${BOLD}11${NC}"
     printf "  %s. [] 安装Docker\n" "${BOLD}12${NC}"
     printf "  %s. [] Caddy HTTPS入口管理 %s\n" "${BOLD}13${NC}" "${YELLOW}(新一代反代/证书)${NC}"
     printf "  %s. [] 安装s-ui\n" "${BOLD}14${NC}"
