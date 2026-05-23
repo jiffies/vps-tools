@@ -38,7 +38,7 @@ show_main_menu() {
     printf "%s\n" "${BLUE}[应用安装]${NC}"
     printf "  %s. >> 一键安装全部应用\n" "${BOLD}11${NC}"
     printf "  %s. [] 安装Docker\n" "${BOLD}12${NC}"
-    printf "  %s. [] 安装Nginx Proxy Manager\n" "${BOLD}13${NC}"
+    printf "  %s. [] 安装Caddy %s\n" "${BOLD}13${NC}" "${YELLOW}(推荐: HTTPS反代/证书)${NC}"
     printf "  %s. [] 安装s-ui\n" "${BOLD}14${NC}"
     printf "  %s. [] 安装Tailscale\n" "${BOLD}15${NC}"
     printf "\n"
@@ -66,7 +66,7 @@ show_uninstall_menu() {
 请选择要卸载的应用:
 
   ${BOLD}1${NC}. Docker
-  ${BOLD}2${NC}. Nginx Proxy Manager
+  ${BOLD}2${NC}. Caddy
   ${BOLD}3${NC}. s-ui
   ${BOLD}4${NC}. Tailscale
 

@@ -7,7 +7,8 @@
 - **🎯 一键操作**: 一键初始化VPS或安装全部应用
 - **🧩 模块化设计**: 每个功能独立模块,易于扩展和维护
 - **🔐 安全优先**: 修复了所有已知安全问题
-  - NPM使用桥接网络而非host模式
+  - Caddy 通过 443 为 s-ui 提供 HTTPS 反代和自动证书
+  - 安装时区分公网 IP 与内网 IP,提示域名 A 记录指向公网 IP
   - Docker GPG密钥使用HTTPS下载
   - SSH配置包含完整的安全参数
 - **📊 交互式菜单**: 彩色UI,清晰的状态显示
@@ -82,7 +83,7 @@ vps-tools/
 │   │   └── 06-security-hardening.sh
 │   ├── install/                   # 安装模块
 │   │   ├── docker.sh
-│   │   ├── nginx-proxy-manager.sh
+│   │   ├── caddy.sh
 │   │   └── s-ui.sh
 │   └── MODULE_TEMPLATE.sh         # 模块模板
 ├── config/                        # 配置文件
@@ -113,16 +114,18 @@ vps-tools/
 | 模块 | 功能 | 状态 |
 |------|------|------|
 | docker | 安装Docker Engine + Compose V2 | ✅ |
-| nginx-proxy-manager | 安装NPM(已修复网络安全问题) | ✅ |
+| caddy | 安装Caddy并配置s-ui HTTPS访问 | ✅ |
 | s-ui | 安装s-ui面板 | ✅ |
 
 ## 🔒 安全改进
 
 ### 已修复的P0级别问题
 
-1. **NPM网络模式安全问题**
-   - ❌ 原: `network_mode: host` (暴露所有端口)
-   - ✅ 改: 桥接网络 + 明确端口映射 `80:80, 81:81, 443:443`
+1. **Caddy公网HTTPS访问**
+   - ✅ 仅开放 `443/tcp`
+   - ✅ 证书签发使用TLS-ALPN,不要求开放80端口
+   - ✅ 安装时提醒域名A记录必须指向VPS公网IP,避免误用内网IP
+   - ✅ 可选Basic Auth,默认不启用以减少重复登录
 
 2. **Docker GPG密钥下载安全**
    - ✅ 使用HTTPS下载GPG密钥
@@ -233,14 +236,15 @@ echo "$(date '+%Y-%m-%d %H:%M:%S')" > "$INSTALL_FLAG"
 # - 系统加固
 ```
 
-### 示例2: 只安装Docker和NPM
+### 示例2: 配置Caddy公开访问s-ui
 
 ```bash
 ./vps-tool.sh
 
 # 选择 "12. 安装Docker"
-# 选择 "13. 安装Nginx Proxy Manager"
-# NPM会自动检查Docker依赖
+# 选择 "14. 安装s-ui"
+# 选择 "13. 安装Caddy"
+# 按提示输入已解析到公网IP的域名、dashboard端口和订阅端口
 ```
 
 ### 示例3: 查看服务状态
@@ -334,7 +338,7 @@ MIT License
 
 - [x] 核心框架和模块加载器
 - [x] Docker安装模块
-- [x] Nginx Proxy Manager安装(修复安全问题)
+- [x] Caddy安装和s-ui HTTPS反代
 - [x] s-ui安装模块
 - [ ] 完整的SSH配置模块(含安全修复)
 - [ ] Fail2Ban配置模块

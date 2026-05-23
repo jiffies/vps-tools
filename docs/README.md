@@ -63,7 +63,7 @@
 #### 🐳 使用Docker部署应用
 1. 阅读 [DOCKER-UFW-INTEGRATION.md](DOCKER-UFW-INTEGRATION.md)
 2. 安装Docker (选项12)
-3. 安装应用 (选项13-14)
+3. 安装应用 (选项13-15)
 4. 使用 [ufw-docker 命令](COMMAND-REFERENCE.md#ufw-docker) 开放端口
 
 #### ❌ 遇到问题需要排查
@@ -106,7 +106,7 @@ vps-tools/
 │   │   └── 06-security-hardening.sh
 │   └── install/                # 安装模块
 │       ├── docker.sh
-│       ├── nginx-proxy-manager.sh
+│       ├── caddy.sh
 │       └── s-ui.sh
 │
 └── lib/                        # 核心库
@@ -127,7 +127,7 @@ vps-tools/
 | 查看Docker容器 | `docker ps` | [COMMAND-REFERENCE.md](COMMAND-REFERENCE.md#docker) |
 | 查看防火墙状态 | `sudo ufw status` | [COMMAND-REFERENCE.md](COMMAND-REFERENCE.md#ufw-防火墙) |
 | 开放Docker端口 | `sudo ufw-docker allow <容器> <端口>` | [DOCKER-UFW-INTEGRATION.md](DOCKER-UFW-INTEGRATION.md) |
-| 查看NPM日志 | `cd /opt/nginx-proxy-manager && docker compose logs -f` | [COMMAND-REFERENCE.md](COMMAND-REFERENCE.md#nginx-proxy-manager) |
+| 查看Caddy日志 | `sudo journalctl -u caddy -f` | [COMMAND-REFERENCE.md](COMMAND-REFERENCE.md#caddy) |
 | 查看封禁IP | `sudo fail2ban-client status sshd` | [COMMAND-REFERENCE.md](COMMAND-REFERENCE.md#fail2ban-防火墙) |
 | 查看系统资源 | `htop` 或 `top` | [COMMAND-REFERENCE.md](COMMAND-REFERENCE.md#进程管理) |
 | 查看磁盘使用 | `df -h` | [COMMAND-REFERENCE.md](COMMAND-REFERENCE.md#磁盘管理) |
@@ -153,7 +153,7 @@ vps-tools/
 - [Docker](COMMAND-REFERENCE.md#docker)
 - [Docker Compose](COMMAND-REFERENCE.md#docker-compose)
 - [ufw-docker](COMMAND-REFERENCE.md#ufw-docker)
-- [Nginx Proxy Manager](COMMAND-REFERENCE.md#nginx-proxy-manager)
+- [Caddy](COMMAND-REFERENCE.md#caddy)
 - [s-ui](COMMAND-REFERENCE.md#s-ui)
 
 ### 运维工具

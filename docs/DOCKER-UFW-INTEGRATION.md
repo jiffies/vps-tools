@@ -52,7 +52,7 @@ sudo systemctl restart ufw
 sudo systemctl restart docker
 
 # 4. 重启 Docker 容器以应用新规则
-cd /opt/nginx-proxy-manager
+cd /opt/your-app
 sudo docker compose restart
 ```
 
@@ -62,18 +62,17 @@ sudo docker compose restart
 # 允许所有人访问容器的某个端口
 sudo ufw-docker allow <容器名> <端口>
 
-# 示例：允许访问 Nginx Proxy Manager 的 80 和 443 端口
-sudo ufw-docker allow nginx-proxy-manager-app-1 80
-sudo ufw-docker allow nginx-proxy-manager-app-1 443
+# 示例：允许访问容器的 8080 端口
+sudo ufw-docker allow app-container 8080
 
-# 只允许特定IP访问 81 端口（管理端口）
-sudo ufw-docker allow nginx-proxy-manager-app-1 81 YOUR_IP_ADDRESS
+# 只允许特定IP访问管理端口
+sudo ufw-docker allow app-container 8080 YOUR_IP_ADDRESS
 
 # 查看容器名称
 docker ps --format "{{.Names}}"
 
 # 删除规则
-sudo ufw-docker delete allow nginx-proxy-manager-app-1 81
+sudo ufw-docker delete allow app-container 8080
 ```
 
 ---
@@ -136,21 +135,20 @@ sudo systemctl restart docker
 修改 Docker Compose 配置，让敏感端口只监听 localhost：
 
 ```yaml
-# /opt/nginx-proxy-manager/docker-compose.yml
+# /opt/your-app/docker-compose.yml
 services:
   app:
-    image: 'jc21/nginx-proxy-manager:latest'
+    image: 'your-app:latest'
     restart: unless-stopped
     ports:
-      - '0.0.0.0:80:80'        # 允许外部访问
-      - '0.0.0.0:443:443'      # 允许外部访问
-      - '127.0.0.1:81:81'      # 只允许本地访问（管理端口）
+      - '0.0.0.0:8080:8080'    # 允许外部访问
+      - '127.0.0.1:9000:9000'  # 只允许本地访问（管理端口）
     # ... 其他配置
 ```
 
 **应用更改**：
 ```bash
-cd /opt/nginx-proxy-manager
+cd /opt/your-app
 sudo docker compose down
 sudo docker compose up -d
 ```
@@ -158,30 +156,21 @@ sudo docker compose up -d
 **访问方式**：
 ```bash
 # 通过 SSH 隧道访问管理端口
-ssh -L 8081:localhost:81 user@your-server-ip
+ssh -L 9000:localhost:9000 user@your-server-ip
 
 # 然后在本地浏览器访问
-http://localhost:8081
+http://localhost:9000
 ```
 
 ---
 
 ## 🎯 推荐配置（最佳实践）
 
-### 对于 Nginx Proxy Manager
+### 对于宿主机 Caddy
 
 ```bash
-# 1. 允许 HTTP/HTTPS 给所有人
-sudo ufw allow 80/tcp comment 'HTTP'
-sudo ufw allow 443/tcp comment 'HTTPS'
-
-# 2. 管理端口只允许你的IP
-sudo ufw allow from YOUR_HOME_IP to any port 81 proto tcp comment 'NPM Admin'
-
-# 或者使用 ufw-docker（更精确）
-sudo ufw-docker allow nginx-proxy-manager-app-1 80
-sudo ufw-docker allow nginx-proxy-manager-app-1 443
-sudo ufw-docker allow nginx-proxy-manager-app-1 81 YOUR_HOME_IP
+# Caddy 不是 Docker 容器,直接由 UFW 管理宿主机端口
+sudo ufw allow 443/tcp comment 'Caddy HTTPS'
 ```
 
 ### 对于其他 Docker 服务
@@ -224,9 +213,9 @@ sudo iptables -L DOCKER-USER -n -v
 
 ```bash
 # 从外部测试（在你的本地电脑）
-# 应该能访问 80/443，不能访问 81（如果设置了IP限制）
-curl -I http://YOUR_SERVER_IP:80
-curl -I http://YOUR_SERVER_IP:81  # 应该超时或拒绝
+# 根据你的规则测试开放端口
+curl -I http://YOUR_SERVER_IP:8080
+curl -I http://YOUR_SERVER_IP:9000  # 如果限制为本地访问,应该超时或拒绝
 ```
 
 ---
@@ -242,7 +231,7 @@ sudo systemctl restart ufw
 sudo systemctl restart docker
 
 # 重启容器
-cd /opt/nginx-proxy-manager
+cd /opt/your-app
 sudo docker compose restart
 ```
 

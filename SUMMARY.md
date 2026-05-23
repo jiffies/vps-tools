@@ -13,7 +13,7 @@
 
 #### 安装模块 (100% 核心功能)
 - [x] docker.sh - Docker + Compose V2安装 (✅ 已修复HTTPS安全问题)
-- [x] nginx-proxy-manager.sh - NPM安装 (✅ 已修复网络安全问题)
+- [x] caddy.sh - Caddy安装与s-ui HTTPS反代
 - [x] s-ui.sh - s-ui面板安装
 
 #### 初始化模块 (20% 完成)
@@ -49,7 +49,7 @@
 
 | 问题 | 原状态 | 改进后 | 文件 |
 |------|--------|--------|------|
-| NPM网络模式 | `host`模式(危险) | 桥接网络+明确端口 | nginx-proxy-manager.sh |
+| s-ui公网访问 | 明文HTTP或手动证书 | Caddy 443自动HTTPS反代 | caddy.sh |
 | Docker GPG密钥 | 可能HTTP | 强制HTTPS | docker.sh |
 | 错误处理 | 部分缺失 | 完整的检查和回滚 | 所有模块 |
 
@@ -109,7 +109,7 @@
 ### 场景2: 只安装应用
 ```bash
 ./vps-tool.sh
-# 选择 12(Docker) -> 13(NPM)
+# 选择 14(s-ui) -> 13(Caddy)
 ```
 
 ### 场景3: 查看状态
@@ -209,7 +209,7 @@
 - [x] lib/menu.sh
 - [x] lib/module-loader.sh
 - [x] modules/install/docker.sh
-- [x] modules/install/nginx-proxy-manager.sh
+- [x] modules/install/caddy.sh
 - [x] modules/install/s-ui.sh
 - [x] modules/init/01-system-update.sh
 - [x] modules/MODULE_TEMPLATE.sh

@@ -31,7 +31,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **安装模块(install/):**
 - docker.sh - Docker + Compose V2
-- nginx-proxy-manager.sh - NPM(已修复安全问题)
+- caddy.sh - Caddy HTTPS反代与证书管理
 - s-ui.sh - s-ui面板
 
 ## 模块开发规范
@@ -94,10 +94,10 @@ show_post_install_info() { } # 安装后信息
 
 ### P0 - 严重安全问题(已修复)
 
-1. **NPM网络模式安全漏洞**
-   - 原: `network_mode: host` (暴露宿主机所有端口)
-   - 改: 桥接网络 + 明确端口映射
-   - 文件: modules/install/nginx-proxy-manager.sh:941-961
+1. **s-ui公网访问安全**
+   - 原: 依赖手动配置证书或明文HTTP访问
+   - 改: Caddy 仅使用443提供自动HTTPS反代
+   - 文件: modules/install/caddy.sh
 
 2. **Docker GPG密钥下载安全**
    - 确保使用HTTPS

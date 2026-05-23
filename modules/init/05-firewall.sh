@@ -134,18 +134,17 @@ detect_ssh_port() {
 detect_service_ports() {
     ALLOWED_PORTS=()
 
-    # 检测Docker相关端口 (Nginx Proxy Manager)
-    local npm_flag="/var/log/vps-tools/install-nginx-proxy-manager.flag"
-    if [ -f "$npm_flag" ]; then
-        ALLOWED_PORTS+=("80/tcp" "443/tcp" "81/tcp")
-        log_info "检测到Nginx Proxy Manager端口: 80, 443, 81"
+    # 检测 Caddy HTTPS 反代
+    local caddy_flag="/var/log/vps-tools/install-caddy.flag"
+    if [ -f "$caddy_flag" ]; then
+        ALLOWED_PORTS+=("443/tcp")
+        log_info "检测到 Caddy HTTPS 端口: 443"
     fi
 
     # 检测s-ui
     local sui_flag="/var/log/vps-tools/install-s-ui.flag"
     if [ -f "$sui_flag" ]; then
-        # s-ui的端口需要用户配置,这里仅提示
-        log_info "检测到s-ui,请手动配置相关端口"
+        log_info "检测到 s-ui,推荐只通过 Caddy 443 访问,不要直接开放 2095/2096"
     fi
 }
 
@@ -254,9 +253,7 @@ configure_firewall() {
 
         local comment=""
         case "$port_num" in
-            80) comment="HTTP" ;;
-            443) comment="HTTPS" ;;
-            81) comment="NPM-Admin" ;;
+            443) comment="Caddy-HTTPS" ;;
             *) comment="Service-$port_num" ;;
         esac
 

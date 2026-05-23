@@ -11,7 +11,7 @@
 - [Docker](#docker)
 - [Docker Compose](#docker-compose)
 - [ufw-docker](#ufw-docker)
-- [Nginx Proxy Manager](#nginx-proxy-manager)
+- [Caddy](#caddy)
 - [s-ui](#s-ui)
 - [日志查看](#日志查看)
 - [网络诊断](#网络诊断)
@@ -45,7 +45,7 @@
 # 示例
 ./modules/init/01-system-update.sh install
 ./modules/install/docker.sh status
-./modules/install/nginx-proxy-manager.sh uninstall
+./modules/install/caddy.sh install
 ```
 
 ### 配置文件
@@ -677,14 +677,13 @@ ufw-docker help
 sudo ufw-docker allow <容器名> <端口>
 
 # 示例
-sudo ufw-docker allow nginx-proxy-manager-app-1 80
-sudo ufw-docker allow nginx-proxy-manager-app-1 443
+sudo ufw-docker allow app-container 8080
 
 # 只允许特定IP访问
 sudo ufw-docker allow <容器名> <端口> <IP地址>
 
 # 示例
-sudo ufw-docker allow nginx-proxy-manager-app-1 81 192.168.1.100
+sudo ufw-docker allow app-container 8080 192.168.1.100
 ```
 
 ### 规则管理
@@ -694,7 +693,7 @@ sudo ufw-docker list
 
 # 删除规则
 sudo ufw-docker delete allow <容器名> <端口>
-sudo ufw-docker delete allow nginx-proxy-manager-app-1 81
+sudo ufw-docker delete allow app-container 8080
 
 # 查看服务状态
 sudo ufw-docker status
@@ -712,96 +711,68 @@ docker ps --format "{{.Names}}"
 docker ps --format "table {{.ID}}\t{{.Names}}\t{{.Ports}}"
 
 # 组合使用
-CONTAINER=$(docker ps --filter ancestor=jc21/nginx-proxy-manager:latest --format "{{.Names}}")
-sudo ufw-docker allow $CONTAINER 80
+CONTAINER=$(docker ps --format "{{.Names}}" | head -1)
+sudo ufw-docker allow "$CONTAINER" 8080
 ```
 
 ---
 
-## Nginx Proxy Manager
+## Caddy
 
-### 访问管理
+### 服务管理
 ```bash
-# 默认访问地址
-http://YOUR_IP:81
+# 查看Caddy服务状态
+sudo systemctl status caddy
 
-# 默认凭据
-邮箱: admin@example.com
-密码: changeme
+# 启动/停止/重启
+sudo systemctl start caddy
+sudo systemctl stop caddy
+sudo systemctl restart caddy
+
+# 重载配置
+sudo systemctl reload caddy
 ```
 
-### Docker Compose 管理
+### 配置与日志
 ```bash
-# 进入NPM目录
-cd /opt/nginx-proxy-manager
+# Caddyfile
+sudo vim /etc/caddy/Caddyfile
 
-# 启动
-docker compose up -d
+# 校验配置
+sudo caddy validate --config /etc/caddy/Caddyfile
 
-# 停止
-docker compose down
+# 查看运行日志
+sudo journalctl -u caddy -f
 
-# 重启
-docker compose restart
-
-# 查看日志
-docker compose logs -f
-
-# 更新到最新版本
-docker compose pull
-docker compose up -d
-
-# 查看状态
-docker compose ps
+# 查看s-ui访问日志
+sudo tail -f /var/log/caddy/s-ui-access.log
 ```
 
-### 容器管理
+### s-ui反代
 ```bash
-# 查看NPM容器
-docker ps | grep nginx-proxy-manager
+# Dashboard默认入口
+https://YOUR_DOMAIN/app/
 
-# 进入容器
-docker exec -it nginx-proxy-manager-app-1 sh
+# 订阅默认入口
+https://YOUR_DOMAIN/sub
 
-# 查看容器日志
-docker logs -f nginx-proxy-manager-app-1
-
-# 重启容器
-docker restart nginx-proxy-manager-app-1
+# 本地目标端口
+127.0.0.1:2095  # dashboard
+127.0.0.1:2096  # 订阅
 ```
 
-### 数据管理
+### 证书与域名
 ```bash
-# 数据目录
-cd /opt/nginx-proxy-manager
+# 域名A记录必须指向VPS公网IP,不是10.x/172.16-31.x/192.168.x内网IP
 
-# 查看数据大小
-du -sh data/
-du -sh letsencrypt/
+# 查看公网IP
+curl -fsS https://api.ipify.org
 
-# 备份数据
-tar -czf npm-backup-$(date +%Y%m%d).tar.gz \
-  -C /opt nginx-proxy-manager
+# 查看证书数据目录
+sudo ls -la /var/lib/caddy
 
-# 恢复数据
-tar -xzf npm-backup-20250120.tar.gz -C /opt
-
-# 查看数据库
-sqlite3 /opt/nginx-proxy-manager/data/database.sqlite
-.tables
-.quit
-```
-
-### SSL 证书管理
-```bash
-# SSL 证书目录
-ls -la /opt/nginx-proxy-manager/letsencrypt/
-
-# 查看证书
-sudo certbot certificates
-
-# 强制更新证书(在容器内)
-docker exec nginx-proxy-manager-app-1 certbot renew --force-renewal
+# Caddy模块默认只使用443/tcp,证书签发依赖TLS-ALPN
+sudo ufw allow 443/tcp comment 'Caddy HTTPS'
 ```
 
 ---
@@ -1140,7 +1111,8 @@ echo "=== Docker ===" && sudo ufw-docker list
 
 # 备份重要数据
 tar -czf backup-$(date +%Y%m%d).tar.gz \
-  /opt/nginx-proxy-manager \
+  /etc/caddy \
+  /var/lib/caddy \
   /etc/s-ui
 ```
 

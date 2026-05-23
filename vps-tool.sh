@@ -221,7 +221,7 @@ run_init_all() {
 run_install_all() {
     print_header "一键安装全部应用"
 
-    if ! confirm_action "一键安装全部应用" "将安装 Docker、Nginx Proxy Manager、s-ui 和 Tailscale"; then
+    if ! confirm_action "一键安装全部应用" "将安装 Docker、s-ui、Caddy 和 Tailscale"; then
         return 1
     fi
 
@@ -231,8 +231,8 @@ run_install_all() {
 
     local modules=(
         "docker"
-        "nginx-proxy-manager"
         "s-ui"
+        "caddy"
         "tailscale"
     )
 
@@ -276,9 +276,13 @@ run_backup() {
     done
 
     # 备份应用数据
-    if [ -d "/opt/npm" ]; then
-        tar -czf "$backup_dir/npm-data.tar.gz" -C /opt npm 2>/dev/null && \
-            log_success "已备份: Nginx Proxy Manager 数据"
+    if [ -d "/etc/caddy" ]; then
+        tar -czf "$backup_dir/caddy-config.tar.gz" -C /etc caddy 2>/dev/null && \
+            log_success "已备份: Caddy 配置"
+    fi
+    if [ -d "/var/lib/caddy" ]; then
+        tar -czf "$backup_dir/caddy-data.tar.gz" -C /var/lib caddy 2>/dev/null && \
+            log_success "已备份: Caddy 证书数据"
     fi
 
     log_success "备份完成: $backup_dir"
@@ -298,7 +302,7 @@ run_uninstall_menu() {
                 run_module "install" "docker" "uninstall"
                 ;;
             2)
-                run_module "install" "nginx-proxy-manager" "uninstall"
+                run_module "install" "caddy" "uninstall"
                 ;;
             3)
                 run_module "install" "s-ui" "uninstall"
@@ -523,7 +527,7 @@ main_loop() {
                 run_module "install" "docker" "install"
                 ;;
             13)
-                run_module "install" "nginx-proxy-manager" "install"
+                run_module "install" "caddy" "install"
                 ;;
             14)
                 run_module "install" "s-ui" "install"

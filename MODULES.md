@@ -69,14 +69,18 @@
 - **安全改进**: 使用HTTPS下载GPG密钥
 - **状态**: 已实现
 
-### nginx-proxy-manager.sh ✅
-- **功能**: 安装Nginx Proxy Manager
+### caddy.sh ✅
+- **功能**: 安装Caddy并为s-ui配置公网HTTPS访问
 - **包含**:
-  - 创建docker-compose配置
-  - 使用bridge网络 (安全)
-  - 自动创建数据目录
-  - 启动NPM容器
-- **安全改进**: 改用bridge网络而非host模式
+  - 从Caddy官方下载接口安装最新版静态二进制
+  - 创建systemd服务
+  - 引导输入域名、dashboard端口(默认2095)、订阅端口(默认2096)
+  - 生成只使用443的Caddyfile
+  - 可选Basic Auth,默认不启用
+- **安全改进**:
+  - 默认只开放443/tcp
+  - 证书签发使用TLS-ALPN,不要求开放80
+  - 明确区分公网IP和内网IP,提醒域名A记录指向公网IP
 - **状态**: 已实现
 
 ### s-ui.sh ✅
@@ -151,10 +155,11 @@
 06-security-hardening (无依赖)
 
 应用安装流程:
-docker (无依赖)
+docker (无依赖,按需安装)
   ↓
-nginx-proxy-manager (依赖Docker)
-s-ui (依赖Docker)
+s-ui (无依赖)
+  ↓
+caddy (无依赖,建议在s-ui之后配置)
 ```
 
 ---
@@ -212,7 +217,7 @@ s-ui (依赖Docker)
 
 ### 从 installApp.sh 迁移
 - ✅ docker: Docker安装部分
-- ✅ nginx-proxy-manager: NPM安装部分
+- ✅ caddy: Caddy安装与s-ui HTTPS反代
 - ✅ s-ui: s-ui安装部分
 
 ### 改进点
