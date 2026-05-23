@@ -11,7 +11,7 @@
 
 # ============ 模块元数据 ============
 MODULE_NAME="Caddy"
-MODULE_VERSION="1.2.0"
+MODULE_VERSION="1.2.1"
 MODULE_DEPS=""
 MODULE_CATEGORY="install"
 MODULE_DESC="安装 Caddy 并管理 8443 应用 HTTPS 入口"
@@ -34,12 +34,14 @@ DEFAULT_SUBSCRIPTION_PATH="/sub"
 DEFAULT_NEZHA_PORT="8008"
 DEFAULT_CADDY_HTTP_PORT="80"
 DEFAULT_CADDY_HTTPS_PORT="8443"
+DEFAULT_SUI_UPSTREAM_SUBSCRIPTION_PATH="/sub"
 
 CADDY_DOMAIN=""
 CADDY_EMAIL=""
 CADDY_DASHBOARD_PORT="$DEFAULT_DASHBOARD_PORT"
 CADDY_SUBSCRIPTION_PORT="$DEFAULT_SUBSCRIPTION_PORT"
 CADDY_SUBSCRIPTION_PATH="$DEFAULT_SUBSCRIPTION_PATH"
+CADDY_UPSTREAM_SUBSCRIPTION_PATH="$DEFAULT_SUI_UPSTREAM_SUBSCRIPTION_PATH"
 CADDY_NEZHA_PORT="$DEFAULT_NEZHA_PORT"
 CADDY_HTTP_PORT="$DEFAULT_CADDY_HTTP_PORT"
 CADDY_HTTPS_PORT="$DEFAULT_CADDY_HTTPS_PORT"
@@ -411,6 +413,7 @@ collect_sui_proxy_config() {
 ${YELLOW}${BOLD}订阅入口安全提示:${NC}
   默认只通过 Caddy 公开 s-ui Dashboard。
   订阅入口如果公开,应使用长随机路径;多数客户端不适合再套 Basic Auth。
+  Caddy 会把外部随机路径自动改写到 s-ui 内部 ${DEFAULT_SUI_UPSTREAM_SUBSCRIPTION_PATH}/,s-ui 面板默认路径可保持不变。
 
 EOF
 
@@ -762,6 +765,44 @@ caddyfile_has_gateway_ports() {
     grep -Eq "^[[:space:]]*https_port[[:space:]]+$CADDY_HTTPS_PORT([[:space:]]|$)" "$CADDYFILE" 2>/dev/null
 }
 
+read_state_value() {
+    local state_file="$1"
+    local key="$2"
+
+    [ -f "$state_file" ] || return 1
+    grep -m1 "^${key}:" "$state_file" 2>/dev/null | cut -d: -f2- | sed 's/^ *//'
+}
+
+find_first_sui_app_name() {
+    local state
+    local type
+
+    [ -d "$APPS_STATE_DIR" ] || return 1
+    for state in "$APPS_STATE_DIR"/*.conf; do
+        [ -f "$state" ] || continue
+        type="$(read_state_value "$state" "Type")"
+        if [ "$type" = "s-ui" ]; then
+            basename "$state" .conf
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+extract_port_from_upstream() {
+    local upstream="$1"
+    local port
+
+    port="${upstream##*:}"
+    if validate_port "$port"; then
+        echo "$port"
+        return 0
+    fi
+
+    return 1
+}
+
 confirm_overwrite_app() {
     local app_name="$1"
     local app_file="$CADDY_APPS_DIR/${app_name}.caddy"
@@ -795,11 +836,14 @@ write_sui_app_caddyfile() {
         subscription_path_matcher="${CADDY_SUBSCRIPTION_PATH} ${CADDY_SUBSCRIPTION_PATH}/*"
         subscription_block="    @subscription path $subscription_path_matcher
     handle @subscription {
+        uri strip_prefix $CADDY_SUBSCRIPTION_PATH
+        rewrite * $CADDY_UPSTREAM_SUBSCRIPTION_PATH{uri}
         reverse_proxy 127.0.0.1:$CADDY_SUBSCRIPTION_PORT
     }
 
 "
-        subscription_state="Subscription: $CADDY_SUBSCRIPTION_PATH -> 127.0.0.1:$CADDY_SUBSCRIPTION_PORT"
+        subscription_state="Subscription: $CADDY_SUBSCRIPTION_PATH -> 127.0.0.1:$CADDY_SUBSCRIPTION_PORT
+SubscriptionRewrite: $CADDY_SUBSCRIPTION_PATH -> $CADDY_UPSTREAM_SUBSCRIPTION_PATH"
     fi
 
     cat > "$app_file" <<EOF
@@ -1081,6 +1125,7 @@ reset_app_config_defaults() {
     CADDY_DASHBOARD_PORT="$DEFAULT_DASHBOARD_PORT"
     CADDY_SUBSCRIPTION_PORT="$DEFAULT_SUBSCRIPTION_PORT"
     CADDY_SUBSCRIPTION_PATH="$DEFAULT_SUBSCRIPTION_PATH"
+    CADDY_UPSTREAM_SUBSCRIPTION_PATH="$DEFAULT_SUI_UPSTREAM_SUBSCRIPTION_PATH"
     CADDY_NEZHA_PORT="$DEFAULT_NEZHA_PORT"
     CADDY_HTTP_PORT="$DEFAULT_CADDY_HTTP_PORT"
     CADDY_HTTPS_PORT="$DEFAULT_CADDY_HTTPS_PORT"
@@ -1239,6 +1284,108 @@ add_sui_proxy() {
     return 0
 }
 
+repair_sui_subscription_proxy() {
+    local app_name
+    local default_app_name
+    local state_file
+    local domain
+    local dashboard_upstream
+    local subscription_line
+    local subscription_upstream
+    local current_basic_auth
+    local path
+    local default_subscription_path
+
+    reset_app_config_defaults
+    ensure_caddy_core_ready || return 1
+
+    default_app_name="$(find_first_sui_app_name 2>/dev/null || true)"
+    default_app_name="${default_app_name:-$(default_app_name_from_domain "panel.example.com")}"
+
+    printf "${BLUE}要修复的 s-ui 应用标识 [默认%s]: ${NC}" "$default_app_name"
+    read -r app_name
+    app_name=${app_name:-$default_app_name}
+    app_name="$(normalize_app_name "$app_name")"
+
+    if ! is_valid_app_name "$app_name"; then
+        log_error "应用标识无效"
+        return 1
+    fi
+
+    state_file="$APPS_STATE_DIR/${app_name}.conf"
+    if [ ! -f "$state_file" ]; then
+        log_warning "未找到 $app_name 的状态记录,将进入完整 s-ui 入口配置流程"
+        add_sui_proxy
+        return $?
+    fi
+
+    domain="$(read_state_value "$state_file" "Domain")"
+    dashboard_upstream="$(read_state_value "$state_file" "Upstream")"
+    subscription_line="$(read_state_value "$state_file" "Subscription")"
+    subscription_upstream="${subscription_line##*-> }"
+    current_basic_auth="$(read_state_value "$state_file" "BasicAuth")"
+
+    if ! is_valid_public_domain "$domain"; then
+        log_warning "状态记录中的域名无效或为空"
+        prompt_cloudflare_domain "请输入用于访问 s-ui 的域名" || return 1
+    else
+        CADDY_DOMAIN="$domain"
+        log_info "使用现有域名: $CADDY_DOMAIN"
+    fi
+
+    CADDY_DASHBOARD_PORT="$(extract_port_from_upstream "$dashboard_upstream" 2>/dev/null || echo "$DEFAULT_DASHBOARD_PORT")"
+    CADDY_SUBSCRIPTION_PORT="$(extract_port_from_upstream "$subscription_upstream" 2>/dev/null || echo "$DEFAULT_SUBSCRIPTION_PORT")"
+    CADDY_ENABLE_SUBSCRIPTION="true"
+    CADDY_UPSTREAM_SUBSCRIPTION_PATH="$DEFAULT_SUI_UPSTREAM_SUBSCRIPTION_PATH"
+
+    cat << EOF
+
+${YELLOW}${BOLD}修复说明:${NC}
+  当前会重建 $app_name 的 Caddy 片段:
+  - Dashboard 继续反代到 127.0.0.1:$CADDY_DASHBOARD_PORT
+  - 外部订阅路径改为长随机路径
+  - Caddy 自动 rewrite 到 s-ui 内部 $CADDY_UPSTREAM_SUBSCRIPTION_PATH/
+  - 2096 仍然只作为本机后端端口,不需要公网开放
+
+EOF
+
+    default_subscription_path="$(generate_subscription_path)"
+    while true; do
+        printf "${BLUE}新的订阅公网路径 [默认%s]: ${NC}" "$default_subscription_path"
+        read -r path
+        path=${path:-$default_subscription_path}
+        path="$(normalize_path_prefix "$path")"
+
+        if is_valid_path_prefix "$path"; then
+            CADDY_SUBSCRIPTION_PATH="$path"
+            break
+        fi
+
+        log_error "路径无效,示例: /sub-a1b2c3d4"
+    done
+
+    if [ "$current_basic_auth" = "true" ]; then
+        log_warning "原入口记录显示已启用 Basic Auth,重建片段需要重新输入 Basic Auth 密码"
+        if ask_yes_no "是否继续为 Dashboard 启用 Basic Auth?" "y"; then
+            CADDY_ENABLE_BASIC_AUTH="true"
+            collect_basic_auth_config || return 1
+            hash_basic_auth_password || return 1
+        else
+            CADDY_ENABLE_BASIC_AUTH="false"
+        fi
+    fi
+
+    if ! ask_yes_no "是否覆盖 $app_name 的 Caddy 配置并重载?" "y"; then
+        log_info "已取消修复"
+        return 0
+    fi
+
+    write_sui_app_caddyfile "$app_name" || return 1
+    reload_caddy_config || return 1
+    show_post_install_info "$app_name"
+    return 0
+}
+
 add_nezha_proxy() {
     local app_name
     local default_app_name
@@ -1304,7 +1451,7 @@ list_caddy_apps() {
     for state in "$APPS_STATE_DIR"/*.conf; do
         [ -f "$state" ] || continue
         echo
-        grep -E "^(Name|Type|Domain|Upstream|Subscription|BasicAuth|CloudflareMode|HTTPSPort|PublicPorts|CreatedAt):" "$state" | sed 's/^/  /'
+        grep -E "^(Name|Type|Domain|Upstream|Subscription|SubscriptionRewrite|BasicAuth|CloudflareMode|HTTPSPort|PublicPorts|CreatedAt):" "$state" | sed 's/^/  /'
     done
     echo
 }
@@ -1363,6 +1510,7 @@ ${CYAN}================================================================${NC}
   ${BOLD}5${NC}. 查看已管理入口
   ${BOLD}6${NC}. 删除应用入口
   ${BOLD}7${NC}. 校验并重载 Caddy
+  ${BOLD}8${NC}. 修复 s-ui 订阅随机路径入口
 
   ${BOLD}0${NC}. 返回主菜单
 
@@ -1375,7 +1523,7 @@ manage() {
 
     while true; do
         show_caddy_manage_menu
-        printf "${BLUE}请输入选项 [0-7]: ${NC}"
+        printf "${BLUE}请输入选项 [0-8]: ${NC}"
         read -r choice
 
         case "$choice" in
@@ -1405,6 +1553,10 @@ manage() {
                 ;;
             7)
                 ensure_caddy_core_ready
+                pause_caddy_menu
+                ;;
+            8)
+                repair_sui_subscription_proxy
                 pause_caddy_menu
                 ;;
             0)
@@ -1520,6 +1672,7 @@ show_post_install_info() {
     local dashboard_url
     local subscription_note="未公开"
     local subscription_upstream="未公开"
+    local subscription_rewrite="未启用"
     if [ "$CADDY_ENABLE_BASIC_AUTH" = "true" ]; then
         auth_note="已启用,用户名: $CADDY_AUTH_USER"
     fi
@@ -1527,6 +1680,7 @@ show_post_install_info() {
     if [ "$CADDY_ENABLE_SUBSCRIPTION" = "true" ]; then
         subscription_note="$(format_caddy_https_url "$CADDY_DOMAIN" "$CADDY_SUBSCRIPTION_PATH")"
         subscription_upstream="127.0.0.1:$CADDY_SUBSCRIPTION_PORT"
+        subscription_rewrite="$CADDY_SUBSCRIPTION_PATH -> $CADDY_UPSTREAM_SUBSCRIPTION_PATH"
     fi
 
     cat << EOF
@@ -1541,6 +1695,7 @@ ${BOLD}公网访问:${NC}
 ${BOLD}本地反代:${NC}
   Dashboard -> 127.0.0.1:$CADDY_DASHBOARD_PORT
   订阅     -> $subscription_upstream
+  订阅改写 -> $subscription_rewrite
   Basic Auth: $auth_note
   应用标识 : $app_name
 
@@ -1578,11 +1733,12 @@ if [ "${BASH_SOURCE[0]}" -ef "$0" ]; then
         install) install ;;
         manage) manage ;;
         add-sui) add_sui_proxy ;;
+        repair-sui-sub) repair_sui_subscription_proxy ;;
         add-nezha) add_nezha_proxy ;;
         add-custom) add_custom_proxy ;;
         reload) reload_caddy_config ;;
         uninstall) uninstall ;;
         status) status ;;
-        *) echo "用法: $0 {install|manage|add-sui|add-nezha|add-custom|reload|uninstall|status}"; exit 1 ;;
+        *) echo "用法: $0 {install|manage|add-sui|repair-sui-sub|add-nezha|add-custom|reload|uninstall|status}"; exit 1 ;;
     esac
 fi

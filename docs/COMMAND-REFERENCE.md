@@ -761,6 +761,7 @@ sudo ./modules/install/caddy.sh manage
 
 # 独立添加入口
 sudo ./modules/install/caddy.sh add-sui
+sudo ./modules/install/caddy.sh repair-sui-sub
 sudo ./modules/install/caddy.sh add-nezha
 sudo ./modules/install/caddy.sh add-custom
 
@@ -775,6 +776,9 @@ https://YOUR_DOMAIN:8443/app/
 
 # 订阅入口默认不公开;如手动选择公开,脚本会生成长随机路径
 https://YOUR_DOMAIN:8443/sub-随机路径
+
+# 外部随机路径会由 Caddy 改写到 s-ui 内部 /sub/
+# 例如: /sub-a1b2c3/client-id -> 127.0.0.1:2096/sub/client-id
 
 # 本地目标端口
 127.0.0.1:2095  # dashboard
