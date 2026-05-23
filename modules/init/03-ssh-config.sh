@@ -135,6 +135,12 @@ install() {
         return 1
     fi
 
+    if ! verify_effective_ssh_security; then
+        log_error "SSH实际生效配置不符合预期,正在回滚..."
+        rollback_ssh_config
+        return 1
+    fi
+
     # 步骤8: 重启SSH服务
     log_step 8 8 "重启SSH服务"
     if ! restart_ssh_service; then
@@ -316,8 +322,6 @@ configure_ssh() {
 # 生成时间: $(date '+%Y-%m-%d %H:%M:%S')
 # 备份文件: $SSH_CONFIG_BACKUP
 
-Include /etc/ssh/sshd_config.d/*.conf
-
 # 端口配置
 Port $CONFIGURED_PORT
 
@@ -327,6 +331,7 @@ PubkeyAuthentication yes
 AuthorizedKeysFile .ssh/authorized_keys
 PasswordAuthentication no
 PermitEmptyPasswords no
+KbdInteractiveAuthentication no
 ChallengeResponseAuthentication no
 UsePAM yes
 
@@ -344,6 +349,10 @@ ClientAliveInterval 120
 ClientAliveCountMax 3
 MaxAuthTries 3
 MaxSessions 10
+
+# 保留系统或云厂商的其他SSH片段,但放在安全项之后。
+# OpenSSH 对多数关键字使用“先读到的值生效”,因此这里不能放在文件顶部。
+Include /etc/ssh/sshd_config.d/*.conf
 EOF
 
     log_success "SSH配置已生成"
@@ -389,6 +398,62 @@ test_ssh_config() {
         log_error "SSH配置测试失败"
         return 1
     fi
+}
+
+# ============ 验证实际生效的SSH安全项 ============
+verify_effective_ssh_security() {
+    local effective
+    local permit_root
+    local password_auth
+    local kbd_auth
+    local challenge_auth
+
+    if [ ! -x /usr/sbin/sshd ]; then
+        log_warning "未找到 /usr/sbin/sshd,跳过实际生效配置校验"
+        return 0
+    fi
+
+    effective=$(/usr/sbin/sshd -T -f "$SSH_CONFIG" -C user=root,host=localhost,addr=127.0.0.1 2>/dev/null) || {
+        log_error "读取 SSH 实际生效配置失败"
+        return 1
+    }
+
+    permit_root=$(echo "$effective" | awk '$1 == "permitrootlogin" {print $2; exit}')
+    password_auth=$(echo "$effective" | awk '$1 == "passwordauthentication" {print $2; exit}')
+    kbd_auth=$(echo "$effective" | awk '$1 == "kbdinteractiveauthentication" {print $2; exit}')
+    challenge_auth=$(echo "$effective" | awk '$1 == "challengeresponseauthentication" {print $2; exit}')
+
+    if [ "$CONFIGURED_USER" = "root" ]; then
+        case "$permit_root" in
+            prohibit-password|without-password)
+                ;;
+            *)
+                log_error "实际 PermitRootLogin=$permit_root,未达到 root 仅密钥登录"
+                return 1
+                ;;
+        esac
+    elif [ "$permit_root" != "no" ]; then
+        log_error "实际 PermitRootLogin=$permit_root,root 登录未禁用"
+        return 1
+    fi
+
+    if [ "$password_auth" != "no" ]; then
+        log_error "实际 PasswordAuthentication=$password_auth,密码登录未禁用"
+        return 1
+    fi
+
+    if [ -n "$kbd_auth" ] && [ "$kbd_auth" != "no" ]; then
+        log_error "实际 KbdInteractiveAuthentication=$kbd_auth,键盘交互密码登录未禁用"
+        return 1
+    fi
+
+    if [ -n "$challenge_auth" ] && [ "$challenge_auth" != "no" ]; then
+        log_error "实际 ChallengeResponseAuthentication=$challenge_auth,挑战响应认证未禁用"
+        return 1
+    fi
+
+    log_success "SSH实际生效配置校验通过"
+    return 0
 }
 
 # ============ 重启SSH服务 ============
@@ -509,6 +574,14 @@ status() {
                 printf "  端口监听: ${GREEN}正常 (socket激活模式)${NC}\n"
             else
                 printf "  端口监听: ${RED}异常${NC}\n"
+            fi
+
+            CONFIGURED_USER="$user"
+            if verify_effective_ssh_security >/dev/null 2>&1; then
+                printf "  实际安全项: ${GREEN}已生效${NC}\n"
+            else
+                printf "  实际安全项: ${RED}未按预期生效${NC}\n"
+                printf "  建议运行: ${CYAN}sshd -T | grep -E 'permitrootlogin|passwordauthentication|kbdinteractiveauthentication'${NC}\n"
             fi
         fi
     else
