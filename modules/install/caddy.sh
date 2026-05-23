@@ -11,7 +11,7 @@
 
 # ============ 模块元数据 ============
 MODULE_NAME="Caddy"
-MODULE_VERSION="1.2.2"
+MODULE_VERSION="1.2.3"
 MODULE_DEPS=""
 MODULE_CATEGORY="install"
 MODULE_DESC="安装 Caddy 并管理 8443 应用 HTTPS 入口"
@@ -906,8 +906,7 @@ write_sui_app_caddyfile() {
         subscription_path_matcher="${CADDY_SUBSCRIPTION_PATH} ${CADDY_SUBSCRIPTION_PATH}/*"
         subscription_block="    @subscription path $subscription_path_matcher
     handle @subscription {
-        uri strip_prefix $CADDY_SUBSCRIPTION_PATH
-        rewrite * $CADDY_UPSTREAM_SUBSCRIPTION_PATH{uri}
+        uri replace $CADDY_SUBSCRIPTION_PATH $CADDY_UPSTREAM_SUBSCRIPTION_PATH 1
         reverse_proxy 127.0.0.1:$CADDY_SUBSCRIPTION_PORT
     }
 
@@ -1414,7 +1413,7 @@ ${YELLOW}${BOLD}修复说明:${NC}
   当前会重建 $app_name 的 Caddy 片段:
   - Dashboard 继续反代到 127.0.0.1:$CADDY_DASHBOARD_PORT
   - 外部订阅路径改为长随机路径
-  - Caddy 自动 rewrite 到 s-ui 内部 $CADDY_UPSTREAM_SUBSCRIPTION_PATH/
+  - Caddy 自动把外部随机路径替换为 s-ui 内部 $CADDY_UPSTREAM_SUBSCRIPTION_PATH/
   - 2096 仍然只作为本机后端端口,不需要公网开放
 
 EOF
@@ -1627,7 +1626,7 @@ EOF
 
         if [ "$subscription_rewrite_target" = "$DEFAULT_SUI_UPSTREAM_SUBSCRIPTION_PATH" ]; then
             CADDY_UPSTREAM_SUBSCRIPTION_PATH="$subscription_rewrite_target"
-            verify_ok "订阅路径会 rewrite 到 s-ui 内部 $subscription_rewrite_target"
+            verify_ok "订阅路径会替换到 s-ui 内部 $subscription_rewrite_target"
         else
             verify_fail "缺少 SubscriptionRewrite: $subscription_path -> $DEFAULT_SUI_UPSTREAM_SUBSCRIPTION_PATH"
         fi
@@ -1639,11 +1638,10 @@ EOF
                 verify_fail "Caddy 片段未反代订阅到 127.0.0.1:$CADDY_SUBSCRIPTION_PORT"
             fi
 
-            if grep -Fq "uri strip_prefix $CADDY_SUBSCRIPTION_PATH" "$app_file" &&
-               grep -Fq "rewrite * $CADDY_UPSTREAM_SUBSCRIPTION_PATH{uri}" "$app_file"; then
-                verify_ok "Caddy 片段已配置订阅路径 rewrite"
+            if grep -Fq "uri replace $CADDY_SUBSCRIPTION_PATH $CADDY_UPSTREAM_SUBSCRIPTION_PATH 1" "$app_file"; then
+                verify_ok "Caddy 片段已配置订阅路径替换"
             else
-                verify_fail "Caddy 片段缺少订阅路径 rewrite"
+                verify_fail "Caddy 片段缺少订阅路径替换;请运行 repair-sui-sub 重建入口"
             fi
         fi
     else
