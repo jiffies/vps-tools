@@ -138,18 +138,24 @@ detect_service_ports() {
     local caddy_flag="/var/log/vps-tools/install-caddy.flag"
     if [ -f "$caddy_flag" ]; then
         log_info "检测到 Caddy 通用 HTTPS 入口"
-        if ask_yes_no "是否开放 Caddy 所需的 80/tcp 和 443/tcp? (80仅用于证书验证和跳转,443用于HTTPS访问)" "y"; then
-            ALLOWED_PORTS+=("80/tcp" "443/tcp")
-            log_info "将开放 Caddy HTTP/HTTPS 端口: 80, 443"
+        if ask_yes_no "是否开放 Caddy 所需的 80/tcp 和 8443/tcp? (80仅用于证书验证和跳转,8443用于面板HTTPS访问)" "y"; then
+            ALLOWED_PORTS+=("80/tcp" "8443/tcp")
+            log_info "将开放 Caddy HTTP/HTTPS 端口: 80, 8443"
         else
-            log_warning "已跳过 Caddy 80/443;Cloudflare 橙云回源和证书签发可能失败"
+            log_warning "已跳过 Caddy 80/8443;Cloudflare 橙云回源和证书签发可能失败"
         fi
     fi
 
     # 检测s-ui
     local sui_flag="/var/log/vps-tools/install-s-ui.flag"
     if [ -f "$sui_flag" ]; then
-        log_info "检测到 s-ui,推荐只通过 Caddy HTTPS 访问,不要直接开放 2095/2096"
+        log_info "检测到 s-ui,推荐不要直接开放 2095/2096"
+        if ask_yes_no "是否开放 443/tcp 给 s-ui/Xray VLESS Reality 入站?" "y"; then
+            ALLOWED_PORTS+=("443/tcp")
+            log_info "将开放 443/tcp 给 VLESS Reality"
+        else
+            log_warning "已跳过 443/tcp;Reality 入站将无法从公网直连"
+        fi
     fi
 }
 
@@ -259,7 +265,8 @@ configure_firewall() {
         local comment=""
         case "$port_num" in
             80) comment="Caddy-HTTP" ;;
-            443) comment="Caddy-HTTPS" ;;
+            443) comment="s-ui-Reality" ;;
+            8443) comment="Caddy-HTTPS" ;;
             *) comment="Service-$port_num" ;;
         esac
 

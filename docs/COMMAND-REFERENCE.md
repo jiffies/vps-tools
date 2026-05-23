@@ -771,20 +771,20 @@ sudo ./modules/install/caddy.sh reload
 ### s-ui反代
 ```bash
 # Dashboard默认入口
-https://YOUR_DOMAIN/app/
+https://YOUR_DOMAIN:8443/app/
 
-# 订阅默认入口
-https://YOUR_DOMAIN/sub
+# 订阅入口默认不公开;如手动选择公开,脚本会生成长随机路径
+https://YOUR_DOMAIN:8443/sub-随机路径
 
 # 本地目标端口
 127.0.0.1:2095  # dashboard
-127.0.0.1:2096  # 订阅
+127.0.0.1:2096  # 可选订阅
 ```
 
 ### Nezha反代
 ```bash
 # Dashboard默认入口
-https://NEZHA_DOMAIN/
+https://NEZHA_DOMAIN:8443/
 
 # 本地目标端口
 127.0.0.1:8008  # Nezha V1 默认 Dashboard/Agent 通信端口
@@ -802,9 +802,11 @@ curl -fsS https://api.ipify.org
 # 查看证书数据目录
 sudo ls -la /var/lib/caddy
 
-# Caddy模块默认使用80/tcp做HTTP-01验证和跳转,443/tcp做HTTPS访问
+# Caddy模块默认使用80/tcp做HTTP-01验证和跳转,8443/tcp做HTTPS面板访问
+# 443/tcp 留给 s-ui/Xray VLESS Reality
 sudo ufw allow 80/tcp comment 'Caddy HTTP'
-sudo ufw allow 443/tcp comment 'Caddy HTTPS'
+sudo ufw allow 8443/tcp comment 'Caddy HTTPS'
+sudo ufw allow 443/tcp comment 's-ui Reality'
 ```
 
 ---

@@ -309,7 +309,7 @@ show_install_notes() {
 
 建议:
   - Dashboard 暴露端口默认使用 ${GREEN}8008${NC}
-  - 如果后续用 Caddy 统一公网入口,应用本体端口无需直接开放到公网
+  - 如果后续用 Caddy 8443 网关公开 Dashboard,应用本体端口无需直接开放到公网
   - 安装完成后,可进入 ${CYAN}13. Caddy HTTPS入口管理${NC} 添加 Nezha 入口
 
 EOF
@@ -590,6 +590,7 @@ ${BOLD}本地访问:${NC}
 
 ${BOLD}后续公网入口:${NC}
   进入 ${CYAN}13. Caddy HTTPS入口管理${NC}
+  默认访问格式: https://你的域名:8443/
   选择 ${CYAN}添加/更新 Nezha Dashboard 入口${NC}
 
 EOF

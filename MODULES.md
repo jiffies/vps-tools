@@ -70,18 +70,19 @@
 - **状态**: 已实现
 
 ### caddy.sh ✅
-- **功能**: 安装Caddy并管理通用公网HTTPS应用入口
+- **功能**: 安装Caddy并管理通用公网HTTPS应用入口(默认8443,443留给Reality)
 - **包含**:
   - 从Caddy官方下载接口安装最新版静态二进制
   - 创建systemd服务
   - 生成主 Caddyfile 并通过 `/etc/caddy/apps.d/*.caddy` 导入应用片段
-  - 支持 s-ui dashboard(默认2095)、订阅端口(默认2096)
+  - 支持 s-ui dashboard(默认2095),订阅入口默认不公开、可选长随机路径公开到2096
   - 支持 Nezha Dashboard(默认8008)和自定义应用反代
   - 引导用户确认域名 A 记录内容指向 VPS 公网 IP 且 Cloudflare 橙云已开启
   - 可选Basic Auth,默认不启用
 - **安全改进**:
-  - 交互确认是否开放80/tcp和443/tcp
+  - 交互确认是否开放80/tcp和8443/tcp
   - 80仅用于HTTP-01证书验证和HTTP->HTTPS跳转
+  - 443/tcp 留给 s-ui/Xray VLESS Reality
   - 禁用TLS-ALPN challenge,避免Cloudflare橙云拦截源站验证
   - 明确区分公网IP和内网IP,提醒Cloudflare A记录内容指向公网IP
 - **状态**: 已实现
@@ -102,7 +103,7 @@
   - 服务端支持 Docker 和独立安装两种官方安装方式
   - 客户端 Agent 通过官方 `agent/install.sh` 安装,需要填入 Dashboard 生成的连接参数
   - 保存 `/opt/nezha/nezha.sh` 作为后续管理入口
-  - 安装完成后提示通过 Caddy HTTPS 入口管理添加公网反代
+  - 安装完成后提示 443/tcp 可用于 Reality,并可通过 Caddy 8443 入口公开面板
 - **状态**: 已实现
 
 ---

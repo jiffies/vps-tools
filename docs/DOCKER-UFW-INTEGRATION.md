@@ -171,7 +171,8 @@ http://localhost:9000
 ```bash
 # Caddy 不是 Docker 容器,直接由 UFW 管理宿主机端口
 sudo ufw allow 80/tcp comment 'Caddy HTTP'
-sudo ufw allow 443/tcp comment 'Caddy HTTPS'
+sudo ufw allow 8443/tcp comment 'Caddy HTTPS'
+sudo ufw allow 443/tcp comment 's-ui Reality'
 ```
 
 ### 对于其他 Docker 服务

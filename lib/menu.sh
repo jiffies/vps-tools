@@ -37,7 +37,7 @@ show_main_menu() {
     printf "\n"
     printf "%s\n" "${BLUE}[应用安装]${NC}"
     printf "  %s. [] 安装Docker\n" "${BOLD}12${NC}"
-    printf "  %s. [] Caddy HTTPS入口管理 %s\n" "${BOLD}13${NC}" "${YELLOW}(新一代反代/证书)${NC}"
+    printf "  %s. [] Caddy HTTPS入口管理 %s\n" "${BOLD}13${NC}" "${YELLOW}(8443面板网关/证书)${NC}"
     printf "  %s. [] 安装s-ui\n" "${BOLD}14${NC}"
     printf "  %s. [] 安装Nezha\n" "${BOLD}15${NC}"
     printf "  %s. [] 安装Tailscale\n" "${BOLD}16${NC}"

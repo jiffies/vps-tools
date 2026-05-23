@@ -49,7 +49,7 @@
 
 | 问题 | 原状态 | 改进后 | 文件 |
 |------|--------|--------|------|
-| s-ui公网访问 | 明文HTTP或手动证书 | Caddy + Cloudflare橙云自动HTTPS反代 | caddy.sh |
+| s-ui公网访问 | 明文HTTP或手动证书 | Caddy + Cloudflare橙云8443面板反代,443留给Reality | caddy.sh |
 | Docker GPG密钥 | 可能HTTP | 强制HTTPS | docker.sh |
 | 错误处理 | 部分缺失 | 完整的检查和回滚 | 所有模块 |
 
@@ -110,6 +110,7 @@
 ```bash
 ./vps-tool.sh
 # 选择 14(s-ui) -> 13(Caddy)
+# Reality 使用 443,Caddy 面板入口使用 https://域名:8443/app/
 ```
 
 ### 场景3: 查看状态

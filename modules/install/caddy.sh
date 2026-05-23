@@ -6,14 +6,15 @@
 # - 从 Caddy 官方下载接口安装最新版静态二进制
 # - 创建 systemd 服务,由非 root 的 caddy 用户运行
 # - 生成适配 Cloudflare 橙云的 Caddyfile,通过 HTTP-01 自动签发源站证书
+# - 默认使用 8443 提供 HTTPS 面板入口,把 443 留给 s-ui/Xray Reality
 # - 通过 apps.d 片段管理 s-ui、Nezha 和自定义应用反代
 
 # ============ 模块元数据 ============
 MODULE_NAME="Caddy"
-MODULE_VERSION="1.1.0"
+MODULE_VERSION="1.2.0"
 MODULE_DEPS=""
 MODULE_CATEGORY="install"
-MODULE_DESC="安装 Caddy 并管理应用 HTTPS 入口"
+MODULE_DESC="安装 Caddy 并管理 8443 应用 HTTPS 入口"
 
 # ============ 全局变量 ============
 CADDY_BIN="/usr/local/bin/caddy"
@@ -31,6 +32,8 @@ DEFAULT_DASHBOARD_PORT="2095"
 DEFAULT_SUBSCRIPTION_PORT="2096"
 DEFAULT_SUBSCRIPTION_PATH="/sub"
 DEFAULT_NEZHA_PORT="8008"
+DEFAULT_CADDY_HTTP_PORT="80"
+DEFAULT_CADDY_HTTPS_PORT="8443"
 
 CADDY_DOMAIN=""
 CADDY_EMAIL=""
@@ -38,8 +41,11 @@ CADDY_DASHBOARD_PORT="$DEFAULT_DASHBOARD_PORT"
 CADDY_SUBSCRIPTION_PORT="$DEFAULT_SUBSCRIPTION_PORT"
 CADDY_SUBSCRIPTION_PATH="$DEFAULT_SUBSCRIPTION_PATH"
 CADDY_NEZHA_PORT="$DEFAULT_NEZHA_PORT"
+CADDY_HTTP_PORT="$DEFAULT_CADDY_HTTP_PORT"
+CADDY_HTTPS_PORT="$DEFAULT_CADDY_HTTPS_PORT"
 CADDY_CUSTOM_UPSTREAM=""
 CADDY_SELECTED_APP_NAME=""
+CADDY_ENABLE_SUBSCRIPTION="false"
 CADDY_ENABLE_BASIC_AUTH="false"
 CADDY_AUTH_USER=""
 CADDY_AUTH_PASSWORD=""
@@ -210,6 +216,36 @@ normalize_path_prefix() {
     echo "$path"
 }
 
+generate_subscription_path() {
+    local token
+
+    if command -v openssl >/dev/null 2>&1; then
+        token="$(openssl rand -hex 12 2>/dev/null || true)"
+    fi
+
+    if [ -z "$token" ]; then
+        token="$(date +%s)-$RANDOM$RANDOM"
+    fi
+
+    echo "/sub-$token"
+}
+
+format_caddy_https_url() {
+    local domain="$1"
+    local path="${2:-/}"
+    local port="${3:-$CADDY_HTTPS_PORT}"
+
+    if [[ "$path" != /* ]]; then
+        path="/$path"
+    fi
+
+    if [ "$port" = "443" ]; then
+        printf "https://%s%s" "$domain" "$path"
+    else
+        printf "https://%s:%s%s" "$domain" "$port" "$path"
+    fi
+}
+
 is_valid_path_prefix() {
     local path="$1"
 
@@ -258,11 +294,13 @@ ${BOLD}Cloudflare 橙云模式准备事项:${NC}
   1. 在 Cloudflare DNS 创建 A 记录,内容填当前服务器${BOLD}公网 IPv4${NC}: ${GREEN}${ip:-请从云厂商控制台确认}${NC}
   2. 将该记录设置为 ${YELLOW}Proxied / 橙云${NC}
   3. Cloudflare SSL/TLS 模式建议设为 ${GREEN}Full (strict)${NC}
-  4. 云厂商安全组/防火墙放行 ${GREEN}80/tcp${NC} 和 ${GREEN}443/tcp${NC}
+  4. 云厂商安全组/防火墙放行 ${GREEN}${CADDY_HTTP_PORT}/tcp${NC} 和 ${GREEN}${CADDY_HTTPS_PORT}/tcp${NC}
+  5. ${YELLOW}443/tcp 留给 s-ui/Xray VLESS Reality,不要让 Caddy 占用${NC}
+  6. 如开启 Cloudflare Always Use HTTPS/重定向规则,请确认不拦截 /.well-known/acme-challenge/*
 
 ${YELLOW}${BOLD}提示:${NC}
-  80 仅用于 ACME HTTP-01 证书验证和 HTTP 到 HTTPS 跳转。
-  日常访问仍使用 https:// 域名,不要直接暴露 s-ui 的 2095/2096。
+  ${CADDY_HTTP_PORT} 仅用于 ACME HTTP-01 证书验证和 HTTP 到 HTTPS 跳转。
+  面板访问使用 https://域名:${CADDY_HTTPS_PORT}/,不要直接暴露 s-ui 的 2095/2096。
 
 EOF
 }
@@ -280,7 +318,7 @@ confirm_cloudflare_dns_ready() {
         log_warning "未查询到 $domain 的 IPv4 解析记录"
     fi
 
-    ask_yes_no "是否已确认 Cloudflare A 记录内容为 VPS 公网 IP 且橙云已开启?" "y"
+    ask_yes_no "是否已确认 Cloudflare A 记录内容为 VPS 公网 IP 且橙云已开启? 后续将使用 :${CADDY_HTTPS_PORT} 访问" "y"
 }
 
 prompt_cloudflare_domain() {
@@ -350,6 +388,7 @@ prompt_app_name() {
 collect_sui_proxy_config() {
     local port
     local path
+    local default_subscription_path
 
     show_domain_notice
 
@@ -366,29 +405,44 @@ collect_sui_proxy_config() {
         fi
     done
 
-    while true; do
-        printf "${BLUE}s-ui 订阅本地端口 [默认${DEFAULT_SUBSCRIPTION_PORT}]: ${NC}"
-        read -r port
-        port=${port:-$DEFAULT_SUBSCRIPTION_PORT}
+    CADDY_ENABLE_SUBSCRIPTION="false"
+    cat << EOF
 
-        if validate_port "$port"; then
-            CADDY_SUBSCRIPTION_PORT="$port"
-            break
-        fi
-    done
+${YELLOW}${BOLD}订阅入口安全提示:${NC}
+  默认只通过 Caddy 公开 s-ui Dashboard。
+  订阅入口如果公开,应使用长随机路径;多数客户端不适合再套 Basic Auth。
 
-    while true; do
-        printf "${BLUE}订阅公网路径 [默认${DEFAULT_SUBSCRIPTION_PATH}]: ${NC}"
-        read -r path
-        path="$(normalize_path_prefix "$path")"
+EOF
 
-        if is_valid_path_prefix "$path"; then
-            CADDY_SUBSCRIPTION_PATH="$path"
-            break
-        fi
+    if ask_yes_no "是否通过 Caddy 额外公开 s-ui 订阅入口? (默认不公开)" "n"; then
+        CADDY_ENABLE_SUBSCRIPTION="true"
 
-        log_error "路径无效,示例: /sub"
-    done
+        while true; do
+            printf "${BLUE}s-ui 订阅本地端口 [默认${DEFAULT_SUBSCRIPTION_PORT}]: ${NC}"
+            read -r port
+            port=${port:-$DEFAULT_SUBSCRIPTION_PORT}
+
+            if validate_port "$port"; then
+                CADDY_SUBSCRIPTION_PORT="$port"
+                break
+            fi
+        done
+
+        default_subscription_path="$(generate_subscription_path)"
+        while true; do
+            printf "${BLUE}订阅公网路径 [默认${default_subscription_path}]: ${NC}"
+            read -r path
+            path=${path:-$default_subscription_path}
+            path="$(normalize_path_prefix "$path")"
+
+            if is_valid_path_prefix "$path"; then
+                CADDY_SUBSCRIPTION_PATH="$path"
+                break
+            fi
+
+            log_error "路径无效,示例: /sub-a1b2c3d4"
+        done
+    fi
 
     if ask_yes_no "是否为 dashboard 额外启用 Basic Auth? (默认不启用)" "n"; then
         CADDY_ENABLE_BASIC_AUTH="true"
@@ -662,16 +716,14 @@ write_main_caddyfile() {
         backup_file "$CADDYFILE" >/dev/null || return 1
     fi
 
-    if [ -n "$email_line" ]; then
-        cat > "$CADDYFILE" <<EOF
+    cat > "$CADDYFILE" <<EOF
 {
+    http_port $CADDY_HTTP_PORT
+    https_port $CADDY_HTTPS_PORT
 $email_line
 }
 
 EOF
-    else
-        : > "$CADDYFILE"
-    fi
 
     cat >> "$CADDYFILE" <<EOF
 import $CADDY_APPS_DIR/*.caddy
@@ -698,8 +750,16 @@ Domain: $domain
 Upstream: $upstream
 ${extra}
 CloudflareMode: orange-cloud-http01
+HTTPSPort: $CADDY_HTTPS_PORT
+PublicPorts: ${CADDY_HTTP_PORT}/tcp ${CADDY_HTTPS_PORT}/tcp
 CreatedAt: $(date '+%Y-%m-%d %H:%M:%S')
 EOF
+}
+
+caddyfile_has_gateway_ports() {
+    [ -f "$CADDYFILE" ] || return 1
+    grep -Eq "^[[:space:]]*http_port[[:space:]]+$CADDY_HTTP_PORT([[:space:]]|$)" "$CADDYFILE" 2>/dev/null &&
+    grep -Eq "^[[:space:]]*https_port[[:space:]]+$CADDY_HTTPS_PORT([[:space:]]|$)" "$CADDYFILE" 2>/dev/null
 }
 
 confirm_overwrite_app() {
@@ -718,6 +778,8 @@ write_sui_app_caddyfile() {
     local app_name="$1"
     local app_file="$CADDY_APPS_DIR/${app_name}.caddy"
     local auth_block=""
+    local subscription_block=""
+    local subscription_state="Subscription: disabled"
     local subscription_path_matcher
 
     ensure_caddy_log_file "$CADDY_LOG_DIR/s-ui-access.log" || return 1
@@ -729,7 +791,16 @@ write_sui_app_caddyfile() {
 "
     fi
 
-    subscription_path_matcher="${CADDY_SUBSCRIPTION_PATH} ${CADDY_SUBSCRIPTION_PATH}/*"
+    if [ "$CADDY_ENABLE_SUBSCRIPTION" = "true" ]; then
+        subscription_path_matcher="${CADDY_SUBSCRIPTION_PATH} ${CADDY_SUBSCRIPTION_PATH}/*"
+        subscription_block="    @subscription path $subscription_path_matcher
+    handle @subscription {
+        reverse_proxy 127.0.0.1:$CADDY_SUBSCRIPTION_PORT
+    }
+
+"
+        subscription_state="Subscription: $CADDY_SUBSCRIPTION_PATH -> 127.0.0.1:$CADDY_SUBSCRIPTION_PORT"
+    fi
 
     cat > "$app_file" <<EOF
 $CADDY_DOMAIN {
@@ -745,11 +816,7 @@ $CADDY_DOMAIN {
         output file $CADDY_LOG_DIR/s-ui-access.log
     }
 
-    @subscription path $subscription_path_matcher
-    handle @subscription {
-        reverse_proxy 127.0.0.1:$CADDY_SUBSCRIPTION_PORT
-    }
-
+$subscription_block
     handle {
 $auth_block        reverse_proxy 127.0.0.1:$CADDY_DASHBOARD_PORT
     }
@@ -758,7 +825,7 @@ EOF
 
     chown root:caddy "$app_file"
     chmod 640 "$app_file"
-    write_app_state "$app_name" "s-ui" "$CADDY_DOMAIN" "127.0.0.1:$CADDY_DASHBOARD_PORT" "Subscription: $CADDY_SUBSCRIPTION_PATH -> 127.0.0.1:$CADDY_SUBSCRIPTION_PORT
+    write_app_state "$app_name" "s-ui" "$CADDY_DOMAIN" "127.0.0.1:$CADDY_DASHBOARD_PORT" "$subscription_state
 BasicAuth: $CADDY_ENABLE_BASIC_AUTH"
 
     return 0
@@ -870,18 +937,18 @@ configure_ufw_for_caddy() {
         return 0
     fi
 
-    if ! ask_yes_no "检测到 UFW 已启用,是否开放 Caddy 所需的 80/tcp 和 443/tcp?" "y"; then
-        log_warning "已跳过开放 80/443;Cloudflare 橙云回源和证书 HTTP-01 验证可能失败"
+    if ! ask_yes_no "检测到 UFW 已启用,是否开放 Caddy 所需的 ${CADDY_HTTP_PORT}/tcp 和 ${CADDY_HTTPS_PORT}/tcp? (443 留给 Reality)" "y"; then
+        log_warning "已跳过开放 ${CADDY_HTTP_PORT}/${CADDY_HTTPS_PORT};Cloudflare 橙云回源和证书 HTTP-01 验证可能失败"
         return 0
     fi
 
-    for port in 80 443; do
+    for port in "$CADDY_HTTP_PORT" "$CADDY_HTTPS_PORT"; do
         if ufw status 2>/dev/null | grep -Eq "(^|[[:space:]])${port}/tcp"; then
             log_info "UFW 已存在 ${port}/tcp 规则"
             continue
         fi
 
-        if ufw allow "${port}/tcp" comment 'Caddy HTTP/HTTPS' >/dev/null 2>&1; then
+        if ufw allow "${port}/tcp" comment 'Caddy HTTP/8443' >/dev/null 2>&1; then
             log_success "已开放 ${port}/tcp"
         else
             log_warning "自动开放 ${port}/tcp 失败,请手动检查 UFW"
@@ -900,7 +967,7 @@ stop_legacy_npm_if_needed() {
         return 0
     fi
 
-    log_warning "检测到 Nginx Proxy Manager 正在运行,它可能占用 443"
+    log_warning "检测到 Nginx Proxy Manager 正在运行,它可能占用 80/443"
 
     if ! ask_yes_no "是否停止 Nginx Proxy Manager 并继续使用 Caddy?" "y"; then
         return 1
@@ -924,7 +991,7 @@ check_caddy_ports_available() {
         return 0
     fi
 
-    for port in 80 443; do
+    for port in "$CADDY_HTTP_PORT" "$CADDY_HTTPS_PORT"; do
         listeners="$(ss -H -tulpen 2>/dev/null | awk -v port="$port" '$5 ~ ":" port "$" || $5 ~ "\\]:" port "$" {print}')"
 
         if [ -z "$listeners" ]; then
@@ -978,13 +1045,13 @@ verify_installation() {
         return 1
     fi
 
-    if ! wait_for_port localhost 80 20; then
-        log_warning "80 端口暂未就绪,证书 HTTP-01 验证可能失败"
+    if ! wait_for_port localhost "$CADDY_HTTP_PORT" 20; then
+        log_warning "${CADDY_HTTP_PORT} 端口暂未就绪,证书 HTTP-01 验证可能失败"
         return 1
     fi
 
-    if ! wait_for_port localhost 443 20; then
-        log_warning "443 端口暂未就绪,请检查 Caddy 日志"
+    if ! wait_for_port localhost "$CADDY_HTTPS_PORT" 20; then
+        log_warning "${CADDY_HTTPS_PORT} 端口暂未就绪,请检查 Caddy 日志"
         return 1
     fi
 
@@ -1002,7 +1069,9 @@ Email: $CADDY_EMAIL
 Caddyfile: $CADDYFILE
 AppsDir: $CADDY_APPS_DIR
 CloudflareMode: orange-cloud-http01
-PublicPorts: 80/tcp 443/tcp
+HTTPPort: $CADDY_HTTP_PORT
+HTTPSPort: $CADDY_HTTPS_PORT
+PublicPorts: ${CADDY_HTTP_PORT}/tcp ${CADDY_HTTPS_PORT}/tcp
 InstalledAt: $(date '+%Y-%m-%d %H:%M:%S')
 EOF
 }
@@ -1013,8 +1082,11 @@ reset_app_config_defaults() {
     CADDY_SUBSCRIPTION_PORT="$DEFAULT_SUBSCRIPTION_PORT"
     CADDY_SUBSCRIPTION_PATH="$DEFAULT_SUBSCRIPTION_PATH"
     CADDY_NEZHA_PORT="$DEFAULT_NEZHA_PORT"
+    CADDY_HTTP_PORT="$DEFAULT_CADDY_HTTP_PORT"
+    CADDY_HTTPS_PORT="$DEFAULT_CADDY_HTTPS_PORT"
     CADDY_CUSTOM_UPSTREAM=""
     CADDY_SELECTED_APP_NAME=""
+    CADDY_ENABLE_SUBSCRIPTION="false"
     CADDY_ENABLE_BASIC_AUTH="false"
     CADDY_AUTH_USER=""
     CADDY_AUTH_PASSWORD=""
@@ -1055,7 +1127,7 @@ install_or_update_caddy_core() {
     log_step 1 8 "停止旧 NPM 服务(如存在)"
     stop_legacy_npm_if_needed || return 1
 
-    log_step 2 8 "检查 80/443 端口"
+    log_step 2 8 "检查 ${CADDY_HTTP_PORT}/${CADDY_HTTPS_PORT} 端口"
     check_caddy_ports_available || return 1
 
     log_step 3 8 "安装 Caddy 最新版"
@@ -1095,9 +1167,9 @@ ensure_caddy_core_ready() {
     ensure_caddy_layout || return 1
     write_systemd_service || return 1
 
-    if ! grep -Fxq "import $CADDY_APPS_DIR/*.caddy" "$CADDYFILE" 2>/dev/null; then
-        log_warning "当前 Caddyfile 未启用 apps.d 导入"
-        if ! ask_yes_no "是否备份并切换为 VPS Tools 通用 Caddy 入口?" "y"; then
+    if ! grep -Fxq "import $CADDY_APPS_DIR/*.caddy" "$CADDYFILE" 2>/dev/null || ! caddyfile_has_gateway_ports; then
+        log_warning "当前 Caddyfile 未启用 VPS Tools 的 80/${CADDY_HTTPS_PORT} 网关配置"
+        if ! ask_yes_no "是否备份并切换为 VPS Tools Caddy 8443 网关? (443 将留给 Reality)" "y"; then
             return 1
         fi
         collect_global_email
@@ -1113,6 +1185,9 @@ show_app_post_install_info() {
     local app_name="$1"
     local app_type="$2"
     local title="$app_type HTTPS 入口配置完成"
+    local public_url
+
+    public_url="$(format_caddy_https_url "$CADDY_DOMAIN" "/")"
 
     cat << EOF
 
@@ -1120,13 +1195,14 @@ show_app_post_install_info() {
   ${GREEN}${BOLD}$title${NC}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ${BOLD}应用标识:${NC} $app_name
-${BOLD}公网访问:${NC} ${CYAN}https://$CADDY_DOMAIN/${NC}
+${BOLD}公网访问:${NC} ${CYAN}$public_url${NC}
 ${BOLD}配置片段:${NC} $CADDY_APPS_DIR/${app_name}.caddy
 ${BOLD}状态记录:${NC} $APPS_STATE_DIR/${app_name}.conf
 
 ${BOLD}端口策略:${NC}
-  Caddy 对公网只需要 80/tcp 和 443/tcp
-  80 仅用于 ACME HTTP-01 证书验证和 HTTP->HTTPS 跳转
+  Caddy 对公网只需要 ${CADDY_HTTP_PORT}/tcp 和 ${CADDY_HTTPS_PORT}/tcp
+  ${CADDY_HTTP_PORT} 仅用于 ACME HTTP-01 证书验证和 HTTP->HTTPS 跳转
+  443/tcp 留给 s-ui/Xray Reality
   应用自身端口建议只监听本机或内网
 
 EOF
@@ -1228,7 +1304,7 @@ list_caddy_apps() {
     for state in "$APPS_STATE_DIR"/*.conf; do
         [ -f "$state" ] || continue
         echo
-        grep -E "^(Name|Type|Domain|Upstream|Subscription|BasicAuth|CloudflareMode|PublicPorts|CreatedAt):" "$state" | sed 's/^/  /'
+        grep -E "^(Name|Type|Domain|Upstream|Subscription|BasicAuth|CloudflareMode|HTTPSPort|PublicPorts|CreatedAt):" "$state" | sed 's/^/  /'
     done
     echo
 }
@@ -1421,7 +1497,7 @@ status() {
         fi
 
         if [ -f "$INSTALL_FLAG" ]; then
-            grep -E "^(Email|Caddyfile|AppsDir|CloudflareMode|PublicPorts|InstalledAt):" "$INSTALL_FLAG" | sed 's/^/  /'
+            grep -E "^(Email|Caddyfile|AppsDir|CloudflareMode|HTTPPort|HTTPSPort|PublicPorts|InstalledAt):" "$INSTALL_FLAG" | sed 's/^/  /'
         fi
 
         if [ -d "$APPS_STATE_DIR" ] && ls "$APPS_STATE_DIR"/*.conf >/dev/null 2>&1; then
@@ -1441,8 +1517,16 @@ status() {
 show_post_install_info() {
     local app_name="${1:-s-ui}"
     local auth_note="未启用"
+    local dashboard_url
+    local subscription_note="未公开"
+    local subscription_upstream="未公开"
     if [ "$CADDY_ENABLE_BASIC_AUTH" = "true" ]; then
         auth_note="已启用,用户名: $CADDY_AUTH_USER"
+    fi
+    dashboard_url="$(format_caddy_https_url "$CADDY_DOMAIN" "/app/")"
+    if [ "$CADDY_ENABLE_SUBSCRIPTION" = "true" ]; then
+        subscription_note="$(format_caddy_https_url "$CADDY_DOMAIN" "$CADDY_SUBSCRIPTION_PATH")"
+        subscription_upstream="127.0.0.1:$CADDY_SUBSCRIPTION_PORT"
     fi
 
     cat << EOF
@@ -1451,20 +1535,22 @@ show_post_install_info() {
   ${GREEN}${BOLD}Caddy + s-ui HTTPS 访问配置完成!${NC}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ${BOLD}公网访问:${NC}
-  Dashboard: ${CYAN}https://$CADDY_DOMAIN/app/${NC}
-  订阅入口: ${CYAN}https://$CADDY_DOMAIN$CADDY_SUBSCRIPTION_PATH${NC}
+  Dashboard: ${CYAN}$dashboard_url${NC}
+  订阅入口: ${CYAN}$subscription_note${NC}
 
 ${BOLD}本地反代:${NC}
   Dashboard -> 127.0.0.1:$CADDY_DASHBOARD_PORT
-  订阅     -> 127.0.0.1:$CADDY_SUBSCRIPTION_PORT
+  订阅     -> $subscription_upstream
   Basic Auth: $auth_note
   应用标识 : $app_name
 
 ${BOLD}端口策略:${NC}
-  开放 80/tcp 和 443/tcp
-  80 仅用于 ACME HTTP-01 证书验证和 HTTP->HTTPS 跳转
+  开放 ${CADDY_HTTP_PORT}/tcp 和 ${CADDY_HTTPS_PORT}/tcp
+  ${CADDY_HTTP_PORT} 仅用于 ACME HTTP-01 证书验证和 HTTP->HTTPS 跳转
+  ${CADDY_HTTPS_PORT} 用于 Caddy 面板 HTTPS 入口
+  443/tcp 留给 s-ui/Xray VLESS Reality
   已禁用 TLS-ALPN challenge,适配 Cloudflare 橙云代理
-  日常访问请使用 HTTPS
+  日常访问请使用 HTTPS 并带上 :${CADDY_HTTPS_PORT}
 
 ${BOLD}管理命令:${NC}
   ${CYAN}systemctl status caddy${NC}             # 查看服务状态

@@ -96,7 +96,7 @@ show_post_install_info() { } # 安装后信息
 
 1. **s-ui公网访问安全**
    - 原: 依赖手动配置证书或明文HTTP访问
-   - 改: Caddy 适配 Cloudflare 橙云,使用80/443提供自动HTTPS反代
+   - 改: Caddy 适配 Cloudflare 橙云,使用80/8443提供面板HTTPS反代,443留给VLESS Reality
    - 文件: modules/install/caddy.sh
 
 2. **Docker GPG密钥下载安全**

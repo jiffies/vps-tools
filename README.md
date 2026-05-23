@@ -7,7 +7,8 @@
 - **🎯 一键初始化**: 1号选项只配置新服务器,应用按需手动安装
 - **🧩 模块化设计**: 每个功能独立模块,易于扩展和维护
 - **🔐 安全优先**: 修复了所有已知安全问题
-  - Caddy 适配 Cloudflare 橙云,通过 80/443 自动申请源站证书
+  - Caddy 适配 Cloudflare 橙云,通过 80/8443 提供面板 HTTPS 网关
+  - 443/tcp 留给 s-ui/Xray VLESS Reality,避免端口冲突
   - Caddy 通过 apps.d 管理 s-ui、Nezha 和自定义应用 HTTPS 入口
   - 安装时提醒域名 A 记录内容指向公网 IP,并开启 Cloudflare 橙云
   - Docker GPG密钥使用HTTPS下载
@@ -124,7 +125,8 @@ vps-tools/
 1. **Caddy通用公网HTTPS入口**
    - ✅ 适配 Cloudflare Proxied/橙云
    - ✅ 开放 `80/tcp` 用于 HTTP-01 验证和 HTTP->HTTPS 跳转
-   - ✅ 开放 `443/tcp` 用于实际 HTTPS 访问
+   - ✅ 开放 `8443/tcp` 用于 Caddy 面板 HTTPS 访问
+   - ✅ 保留 `443/tcp` 给 s-ui/Xray VLESS Reality
    - ✅ 安装时提醒域名 A 记录内容必须指向 VPS 公网 IP
    - ✅ 使用 `/etc/caddy/apps.d/*.caddy` 管理 s-ui、Nezha 和自定义应用入口
    - ✅ 可选Basic Auth,默认不启用以减少重复登录
@@ -250,7 +252,7 @@ echo "$(date '+%Y-%m-%d %H:%M:%S')" > "$INSTALL_FLAG"
 # 选择 "13. Caddy HTTPS入口管理"
 # 可安装/更新 Caddy 核心,也可添加 s-ui、Nezha 或自定义应用入口
 # 按提示确认 Cloudflare A 记录内容指向公网IP且橙云已开启
-# 再输入应用域名、本地端口和应用标识
+# 再输入应用域名、本地端口和应用标识;访问格式为 https://域名:8443/
 ```
 
 ### 示例3: 查看服务状态
