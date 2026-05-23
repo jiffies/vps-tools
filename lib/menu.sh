@@ -38,7 +38,7 @@ show_main_menu() {
     printf "%s\n" "${BLUE}[应用安装]${NC}"
     printf "  %s. >> 一键安装全部应用\n" "${BOLD}11${NC}"
     printf "  %s. [] 安装Docker\n" "${BOLD}12${NC}"
-    printf "  %s. [] 安装Caddy %s\n" "${BOLD}13${NC}" "${YELLOW}(推荐: HTTPS反代/证书)${NC}"
+    printf "  %s. [] Caddy HTTPS入口管理 %s\n" "${BOLD}13${NC}" "${YELLOW}(新一代反代/证书)${NC}"
     printf "  %s. [] 安装s-ui\n" "${BOLD}14${NC}"
     printf "  %s. [] 安装Tailscale\n" "${BOLD}15${NC}"
     printf "\n"

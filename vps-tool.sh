@@ -527,7 +527,7 @@ main_loop() {
                 run_module "install" "docker" "install"
                 ;;
             13)
-                run_module "install" "caddy" "install"
+                run_module "install" "caddy" "manage"
                 ;;
             14)
                 run_module "install" "s-ui" "install"

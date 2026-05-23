@@ -8,6 +8,7 @@
 - **🧩 模块化设计**: 每个功能独立模块,易于扩展和维护
 - **🔐 安全优先**: 修复了所有已知安全问题
   - Caddy 适配 Cloudflare 橙云,通过 80/443 自动申请源站证书
+  - Caddy 通过 apps.d 管理 s-ui、Nezha 和自定义应用 HTTPS 入口
   - 安装时提醒域名 A 记录内容指向公网 IP,并开启 Cloudflare 橙云
   - Docker GPG密钥使用HTTPS下载
   - SSH配置包含完整的安全参数
@@ -114,18 +115,19 @@ vps-tools/
 | 模块 | 功能 | 状态 |
 |------|------|------|
 | docker | 安装Docker Engine + Compose V2 | ✅ |
-| caddy | 安装Caddy并配置s-ui HTTPS访问 | ✅ |
+| caddy | 安装Caddy并管理通用 HTTPS 应用入口 | ✅ |
 | s-ui | 安装s-ui面板 | ✅ |
 
 ## 🔒 安全改进
 
 ### 已修复的P0级别问题
 
-1. **Caddy公网HTTPS访问**
+1. **Caddy通用公网HTTPS入口**
    - ✅ 适配 Cloudflare Proxied/橙云
    - ✅ 开放 `80/tcp` 用于 HTTP-01 验证和 HTTP->HTTPS 跳转
    - ✅ 开放 `443/tcp` 用于实际 HTTPS 访问
    - ✅ 安装时提醒域名 A 记录内容必须指向 VPS 公网 IP
+   - ✅ 使用 `/etc/caddy/apps.d/*.caddy` 管理 s-ui、Nezha 和自定义应用入口
    - ✅ 可选Basic Auth,默认不启用以减少重复登录
 
 2. **Docker GPG密钥下载安全**
@@ -237,16 +239,17 @@ echo "$(date '+%Y-%m-%d %H:%M:%S')" > "$INSTALL_FLAG"
 # - 系统加固
 ```
 
-### 示例2: 配置Caddy公开访问s-ui
+### 示例2: 配置Caddy公开访问应用
 
 ```bash
 ./vps-tool.sh
 
 # 选择 "12. 安装Docker"
 # 选择 "14. 安装s-ui"
-# 选择 "13. 安装Caddy"
+# 选择 "13. Caddy HTTPS入口管理"
+# 可安装/更新 Caddy 核心,也可添加 s-ui、Nezha 或自定义应用入口
 # 按提示确认 Cloudflare A 记录内容指向公网IP且橙云已开启
-# 再输入域名、dashboard端口和订阅端口
+# 再输入应用域名、本地端口和应用标识
 ```
 
 ### 示例3: 查看服务状态
@@ -340,7 +343,7 @@ MIT License
 
 - [x] 核心框架和模块加载器
 - [x] Docker安装模块
-- [x] Caddy安装和s-ui HTTPS反代
+- [x] Caddy通用 HTTPS 入口管理
 - [x] s-ui安装模块
 - [ ] 完整的SSH配置模块(含安全修复)
 - [ ] Fail2Ban配置模块

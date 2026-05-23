@@ -738,6 +738,10 @@ sudo systemctl reload caddy
 # Caddyfile
 sudo vim /etc/caddy/Caddyfile
 
+# 应用入口片段
+sudo ls -la /etc/caddy/apps.d/
+sudo vim /etc/caddy/apps.d/YOUR_APP.caddy
+
 # 校验配置
 sudo caddy validate --config /etc/caddy/Caddyfile
 
@@ -746,6 +750,20 @@ sudo journalctl -u caddy -f
 
 # 查看s-ui访问日志
 sudo tail -f /var/log/caddy/s-ui-access.log
+```
+
+### VPS Tools 管理入口
+```bash
+# 打开 Caddy HTTPS 入口管理菜单
+sudo ./modules/install/caddy.sh manage
+
+# 独立添加入口
+sudo ./modules/install/caddy.sh add-sui
+sudo ./modules/install/caddy.sh add-nezha
+sudo ./modules/install/caddy.sh add-custom
+
+# 校验并重载
+sudo ./modules/install/caddy.sh reload
 ```
 
 ### s-ui反代
@@ -759,6 +777,15 @@ https://YOUR_DOMAIN/sub
 # 本地目标端口
 127.0.0.1:2095  # dashboard
 127.0.0.1:2096  # 订阅
+```
+
+### Nezha反代
+```bash
+# Dashboard默认入口
+https://NEZHA_DOMAIN/
+
+# 本地目标端口
+127.0.0.1:8008  # Nezha V1 默认 Dashboard/Agent 通信端口
 ```
 
 ### 证书与域名

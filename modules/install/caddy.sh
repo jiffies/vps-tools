@@ -1,39 +1,45 @@
 #!/bin/bash
 # modules/install/caddy.sh
-# Caddy 安装与 s-ui HTTPS 反代配置模块
+# Caddy 安装与通用 HTTPS 入口管理模块
 #
 # 功能:
 # - 从 Caddy 官方下载接口安装最新版静态二进制
 # - 创建 systemd 服务,由非 root 的 caddy 用户运行
 # - 生成适配 Cloudflare 橙云的 Caddyfile,通过 HTTP-01 自动签发源站证书
-# - 反代 s-ui dashboard(默认 2095) 和订阅端口(默认 2096)
+# - 通过 apps.d 片段管理 s-ui、Nezha 和自定义应用反代
 
 # ============ 模块元数据 ============
 MODULE_NAME="Caddy"
-MODULE_VERSION="1.0.0"
+MODULE_VERSION="1.1.0"
 MODULE_DEPS=""
 MODULE_CATEGORY="install"
-MODULE_DESC="安装 Caddy 并配置 s-ui HTTPS 访问"
+MODULE_DESC="安装 Caddy 并管理应用 HTTPS 入口"
 
 # ============ 全局变量 ============
 CADDY_BIN="/usr/local/bin/caddy"
 CADDY_DIR="/etc/caddy"
 CADDYFILE="$CADDY_DIR/Caddyfile"
+CADDY_APPS_DIR="$CADDY_DIR/apps.d"
 CADDY_SERVICE="/etc/systemd/system/caddy.service"
 CADDY_DATA_DIR="/var/lib/caddy"
 CADDY_LOG_DIR="/var/log/caddy"
 INSTALL_FLAG="/var/log/vps-tools/install-caddy.flag"
+APPS_STATE_DIR="/var/log/vps-tools/caddy-apps"
 CADDY_DOWNLOAD_BASE="https://caddyserver.com/api/download"
 
 DEFAULT_DASHBOARD_PORT="2095"
 DEFAULT_SUBSCRIPTION_PORT="2096"
 DEFAULT_SUBSCRIPTION_PATH="/sub"
+DEFAULT_NEZHA_PORT="8008"
 
 CADDY_DOMAIN=""
 CADDY_EMAIL=""
 CADDY_DASHBOARD_PORT="$DEFAULT_DASHBOARD_PORT"
 CADDY_SUBSCRIPTION_PORT="$DEFAULT_SUBSCRIPTION_PORT"
 CADDY_SUBSCRIPTION_PATH="$DEFAULT_SUBSCRIPTION_PATH"
+CADDY_NEZHA_PORT="$DEFAULT_NEZHA_PORT"
+CADDY_CUSTOM_UPSTREAM=""
+CADDY_SELECTED_APP_NAME=""
 CADDY_ENABLE_BASIC_AUTH="false"
 CADDY_AUTH_USER=""
 CADDY_AUTH_PASSWORD=""
@@ -50,6 +56,11 @@ check_dependencies() {
 
 check_sui_installed() {
     command -v s-ui &>/dev/null || [ -f /var/log/vps-tools/install-s-ui.flag ] || [ -f /usr/local/s-ui/installed.flag ]
+}
+
+pause_caddy_menu() {
+    echo
+    read -r -p "按 Enter 继续..."
 }
 
 # ============ 校验与输入 ============
@@ -198,6 +209,35 @@ is_valid_path_prefix() {
     [[ "$path" =~ ^/[A-Za-z0-9._~/-]+$ ]] && [ "$path" != "/" ]
 }
 
+is_valid_app_name() {
+    local name="$1"
+    [[ "$name" =~ ^[a-z0-9][a-z0-9_-]{0,31}$ ]]
+}
+
+normalize_app_name() {
+    local name="$1"
+    name="$(printf "%s" "$name" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9_-' '-')"
+    while [[ "$name" == -* ]]; do
+        name="${name#-}"
+    done
+    while [[ "$name" == *- ]]; do
+        name="${name%-}"
+    done
+    echo "${name:-app}"
+}
+
+default_app_name_from_domain() {
+    local domain="$1"
+    local first_label="${domain%%.*}"
+    normalize_app_name "$first_label"
+}
+
+resolve_existing_email() {
+    if [ -f "$INSTALL_FLAG" ]; then
+        grep "^Email:" "$INSTALL_FLAG" 2>/dev/null | cut -d: -f2- | sed 's/^ *//'
+    fi
+}
+
 show_domain_notice() {
     local ip
     ip="$(get_public_server_ip 2>/dev/null || true)"
@@ -236,41 +276,77 @@ confirm_cloudflare_dns_ready() {
     ask_yes_no "是否已确认 Cloudflare A 记录内容为 VPS 公网 IP 且橙云已开启?" "y"
 }
 
-collect_proxy_config() {
+prompt_cloudflare_domain() {
+    local prompt="$1"
     local domain
-    local email
-    local port
-    local path
-
-    show_domain_notice
-
     while true; do
-        printf "${BLUE}请输入用于访问 s-ui 的域名: ${NC}"
+        printf "${BLUE}%s: ${NC}" "$prompt"
         read -r domain
         domain="$(echo "$domain" | tr '[:upper:]' '[:lower:]')"
 
         if is_valid_public_domain "$domain"; then
-            CADDY_DOMAIN="$domain"
-            break
+            if confirm_cloudflare_dns_ready "$domain"; then
+                CADDY_DOMAIN="$domain"
+                return 0
+            fi
+            return 1
         fi
 
         log_error "域名无效,示例: panel.example.com"
     done
+}
 
-    if ! confirm_cloudflare_dns_ready "$CADDY_DOMAIN"; then
-        log_info "已取消 Caddy 配置"
-        return 1
+collect_global_email() {
+    local email
+    local current_email
+
+    current_email="$(resolve_existing_email)"
+    if [ -n "$current_email" ]; then
+        printf "${BLUE}请输入 ACME 通知邮箱 [默认%s, 可留空]: ${NC}" "$current_email"
+    else
+        printf "${BLUE}请输入 ACME 通知邮箱 (可留空): ${NC}"
     fi
-
-    printf "${BLUE}请输入 ACME 通知邮箱 (可留空): ${NC}"
     read -r email
+    email=${email:-$current_email}
+
     if [ -n "$email" ]; then
         if validate_email "$email"; then
             CADDY_EMAIL="$email"
         else
             log_warning "邮箱格式无效,将不写入 ACME 邮箱"
+            CADDY_EMAIL=""
         fi
+    else
+        CADDY_EMAIL=""
     fi
+}
+
+prompt_app_name() {
+    local default_name="$1"
+    local app_name
+
+    while true; do
+        printf "${BLUE}应用标识 [默认%s]: ${NC}" "$default_name"
+        read -r app_name
+        app_name=${app_name:-$default_name}
+        app_name="$(normalize_app_name "$app_name")"
+
+        if is_valid_app_name "$app_name"; then
+            CADDY_SELECTED_APP_NAME="$app_name"
+            return 0
+        fi
+
+        log_error "应用标识无效,只能使用小写字母、数字、下划线、短横线,最多32个字符"
+    done
+}
+
+collect_sui_proxy_config() {
+    local port
+    local path
+
+    show_domain_notice
+
+    prompt_cloudflare_domain "请输入用于访问 s-ui 的域名" || return 1
 
     while true; do
         printf "${BLUE}s-ui dashboard 本地端口 [默认${DEFAULT_DASHBOARD_PORT}]: ${NC}"
@@ -311,6 +387,58 @@ collect_proxy_config() {
         CADDY_ENABLE_BASIC_AUTH="true"
         collect_basic_auth_config || return 1
     fi
+
+    return 0
+}
+
+collect_nezha_proxy_config() {
+    local port
+
+    show_domain_notice
+    prompt_cloudflare_domain "请输入用于访问 Nezha Dashboard 的域名" || return 1
+
+    while true; do
+        printf "${BLUE}Nezha Dashboard 本地端口 [默认${DEFAULT_NEZHA_PORT}]: ${NC}"
+        read -r port
+        port=${port:-$DEFAULT_NEZHA_PORT}
+
+        if validate_port "$port"; then
+            CADDY_NEZHA_PORT="$port"
+            break
+        fi
+    done
+
+    cat << EOF
+
+${YELLOW}${BOLD}Nezha 提示:${NC}
+  Nezha V1 Dashboard 和 Agent 通信默认共享 8008 端口。
+  Cloudflare 橙云需要 WebSocket 支持;Agent 通信建议按 Nezha 文档检查。
+
+EOF
+
+    return 0
+}
+
+collect_custom_proxy_config() {
+    local port
+    local upstream_host
+
+    show_domain_notice
+    prompt_cloudflare_domain "请输入用于访问应用的域名" || return 1
+
+    printf "${BLUE}上游主机 [默认127.0.0.1]: ${NC}"
+    read -r upstream_host
+    upstream_host=${upstream_host:-127.0.0.1}
+
+    while true; do
+        printf "${BLUE}上游端口: ${NC}"
+        read -r port
+
+        if validate_port "$port"; then
+            CADDY_CUSTOM_UPSTREAM="$upstream_host:$port"
+            break
+        fi
+    done
 
     return 0
 }
@@ -408,10 +536,13 @@ ensure_caddy_user_and_dirs() {
             caddy
     fi
 
-    mkdir -p "$CADDY_DIR" "$CADDY_DATA_DIR" "$CADDY_LOG_DIR"
+    mkdir -p "$CADDY_DIR" "$CADDY_APPS_DIR" "$CADDY_DATA_DIR" "$CADDY_LOG_DIR" "$APPS_STATE_DIR"
     chown root:caddy "$CADDY_DIR"
     chmod 755 "$CADDY_DIR"
+    chown -R root:caddy "$CADDY_APPS_DIR"
+    chmod 755 "$CADDY_APPS_DIR"
     chown -R caddy:caddy "$CADDY_DATA_DIR" "$CADDY_LOG_DIR"
+    chmod 755 "$APPS_STATE_DIR"
 
     return 0
 }
@@ -468,23 +599,23 @@ hash_basic_auth_password() {
     return 0
 }
 
-write_caddyfile() {
+ensure_caddy_layout() {
+    mkdir -p "$CADDY_APPS_DIR" "$APPS_STATE_DIR"
+    if [ ! -f "$CADDY_APPS_DIR/_placeholder.caddy" ]; then
+        cat > "$CADDY_APPS_DIR/_placeholder.caddy" <<'EOF'
+# Placeholder so Caddy import works before applications are added.
+EOF
+    fi
+    chown -R root:caddy "$CADDY_DIR" 2>/dev/null || true
+    chmod 755 "$CADDY_DIR" "$CADDY_APPS_DIR"
+}
+
+write_main_caddyfile() {
     local email_line=""
-    local auth_block=""
-    local subscription_path_matcher
 
     if [ -n "$CADDY_EMAIL" ]; then
         email_line="    email $CADDY_EMAIL"
     fi
-
-    if [ "$CADDY_ENABLE_BASIC_AUTH" = "true" ]; then
-        auth_block="        basic_auth argon2id {
-            $CADDY_AUTH_USER $CADDY_AUTH_HASH
-        }
-"
-    fi
-
-    subscription_path_matcher="${CADDY_SUBSCRIPTION_PATH} ${CADDY_SUBSCRIPTION_PATH}/*"
 
     if [ -f "$CADDYFILE" ]; then
         backup_file "$CADDYFILE" >/dev/null || return 1
@@ -502,6 +633,62 @@ EOF
     fi
 
     cat >> "$CADDYFILE" <<EOF
+import $CADDY_APPS_DIR/*.caddy
+EOF
+
+    chown root:caddy "$CADDYFILE"
+    chmod 640 "$CADDYFILE"
+
+    return 0
+}
+
+write_app_state() {
+    local app_name="$1"
+    local app_type="$2"
+    local domain="$3"
+    local upstream="$4"
+    local extra="${5:-}"
+
+    mkdir -p "$APPS_STATE_DIR"
+    cat > "$APPS_STATE_DIR/${app_name}.conf" <<EOF
+Name: $app_name
+Type: $app_type
+Domain: $domain
+Upstream: $upstream
+${extra}
+CloudflareMode: orange-cloud-http01
+CreatedAt: $(date '+%Y-%m-%d %H:%M:%S')
+EOF
+}
+
+confirm_overwrite_app() {
+    local app_name="$1"
+    local app_file="$CADDY_APPS_DIR/${app_name}.caddy"
+
+    if [ ! -f "$app_file" ]; then
+        return 0
+    fi
+
+    log_warning "应用反代已存在: $app_name"
+    ask_yes_no "是否覆盖现有配置?" "n"
+}
+
+write_sui_app_caddyfile() {
+    local app_name="$1"
+    local app_file="$CADDY_APPS_DIR/${app_name}.caddy"
+    local auth_block=""
+    local subscription_path_matcher
+
+    if [ "$CADDY_ENABLE_BASIC_AUTH" = "true" ]; then
+        auth_block="        basic_auth argon2id {
+            $CADDY_AUTH_USER $CADDY_AUTH_HASH
+        }
+"
+    fi
+
+    subscription_path_matcher="${CADDY_SUBSCRIPTION_PATH} ${CADDY_SUBSCRIPTION_PATH}/*"
+
+    cat > "$app_file" <<EOF
 $CADDY_DOMAIN {
     tls {
         issuer acme {
@@ -526,8 +713,90 @@ $auth_block        reverse_proxy 127.0.0.1:$CADDY_DASHBOARD_PORT
 }
 EOF
 
-    chown root:caddy "$CADDYFILE"
-    chmod 640 "$CADDYFILE"
+    chown root:caddy "$app_file"
+    chmod 640 "$app_file"
+    write_app_state "$app_name" "s-ui" "$CADDY_DOMAIN" "127.0.0.1:$CADDY_DASHBOARD_PORT" "Subscription: $CADDY_SUBSCRIPTION_PATH -> 127.0.0.1:$CADDY_SUBSCRIPTION_PORT
+BasicAuth: $CADDY_ENABLE_BASIC_AUTH"
+
+    return 0
+}
+
+write_nezha_app_caddyfile() {
+    local app_name="$1"
+    local app_file="$CADDY_APPS_DIR/${app_name}.caddy"
+
+    cat > "$app_file" <<EOF
+$CADDY_DOMAIN {
+    tls {
+        issuer acme {
+            disable_tlsalpn_challenge
+        }
+    }
+
+    encode zstd gzip
+
+    log {
+        output file $CADDY_LOG_DIR/${app_name}-access.log
+    }
+
+    @grpcProto {
+        path /proto.NezhaService/*
+    }
+
+    reverse_proxy @grpcProto {
+        header_up Host {host}
+        header_up nz-realip {http.CF-Connecting-IP}
+        transport http {
+            versions h2c
+            read_buffer 4096
+        }
+        to 127.0.0.1:$CADDY_NEZHA_PORT
+    }
+
+    reverse_proxy {
+        header_up Host {host}
+        header_up Origin https://{host}
+        header_up nz-realip {http.CF-Connecting-IP}
+        transport http {
+            read_buffer 16384
+        }
+        to 127.0.0.1:$CADDY_NEZHA_PORT
+    }
+}
+EOF
+
+    chown root:caddy "$app_file"
+    chmod 640 "$app_file"
+    write_app_state "$app_name" "nezha" "$CADDY_DOMAIN" "127.0.0.1:$CADDY_NEZHA_PORT" "Notes: Nezha V1 dashboard and agent communication share the same HTTP/gRPC port"
+
+    return 0
+}
+
+write_custom_app_caddyfile() {
+    local app_name="$1"
+    local app_file="$CADDY_APPS_DIR/${app_name}.caddy"
+
+    cat > "$app_file" <<EOF
+$CADDY_DOMAIN {
+    tls {
+        issuer acme {
+            disable_tlsalpn_challenge
+        }
+    }
+
+    encode zstd gzip
+
+    log {
+        output file $CADDY_LOG_DIR/${app_name}-access.log
+    }
+
+    reverse_proxy $CADDY_CUSTOM_UPSTREAM
+}
+EOF
+
+    chown root:caddy "$app_file"
+    chmod 640 "$app_file"
+    write_app_state "$app_name" "custom" "$CADDY_DOMAIN" "$CADDY_CUSTOM_UPSTREAM"
 
     return 0
 }
@@ -551,6 +820,11 @@ configure_ufw_for_caddy() {
 
     if ! ufw status 2>/dev/null | grep -q "Status: active"; then
         log_info "UFW 未启用,跳过防火墙规则配置"
+        return 0
+    fi
+
+    if ! ask_yes_no "检测到 UFW 已启用,是否开放 Caddy 所需的 80/tcp 和 443/tcp?" "y"; then
+        log_warning "已跳过开放 80/443;Cloudflare 橙云回源和证书 HTTP-01 验证可能失败"
         return 0
     fi
 
@@ -677,44 +951,58 @@ write_install_flag() {
     mkdir -p "$(dirname "$INSTALL_FLAG")"
     cat > "$INSTALL_FLAG" <<EOF
 Version: ${version:-unknown}
-Domain: $CADDY_DOMAIN
-Dashboard: 127.0.0.1:$CADDY_DASHBOARD_PORT
-Subscription: $CADDY_SUBSCRIPTION_PATH -> 127.0.0.1:$CADDY_SUBSCRIPTION_PORT
-BasicAuth: $CADDY_ENABLE_BASIC_AUTH
+Email: $CADDY_EMAIL
+Caddyfile: $CADDYFILE
+AppsDir: $CADDY_APPS_DIR
 CloudflareMode: orange-cloud-http01
 PublicPorts: 80/tcp 443/tcp
 InstalledAt: $(date '+%Y-%m-%d %H:%M:%S')
 EOF
 }
 
-# ============ 安装函数 ============
-install() {
-    log_info "开始安装 $MODULE_NAME..."
+reset_app_config_defaults() {
+    CADDY_DOMAIN=""
+    CADDY_DASHBOARD_PORT="$DEFAULT_DASHBOARD_PORT"
+    CADDY_SUBSCRIPTION_PORT="$DEFAULT_SUBSCRIPTION_PORT"
+    CADDY_SUBSCRIPTION_PATH="$DEFAULT_SUBSCRIPTION_PATH"
+    CADDY_NEZHA_PORT="$DEFAULT_NEZHA_PORT"
+    CADDY_CUSTOM_UPSTREAM=""
+    CADDY_SELECTED_APP_NAME=""
+    CADDY_ENABLE_BASIC_AUTH="false"
+    CADDY_AUTH_USER=""
+    CADDY_AUTH_PASSWORD=""
+    CADDY_AUTH_HASH=""
+}
 
-    if check_installed; then
-        log_warning "$MODULE_NAME 已安装或已配置"
-        if command -v caddy >/dev/null 2>&1; then
-            log_info "当前版本: $(caddy version 2>/dev/null | awk '{print $1}')"
-        fi
-
-        if ! ask_yes_no "是否重新安装最新版并重新配置 s-ui 反代?"; then
-            return 0
-        fi
+verify_caddy_service() {
+    if ! command -v caddy >/dev/null 2>&1; then
+        log_error "caddy 命令不存在"
+        return 1
     fi
+
+    if ! systemctl is-active --quiet caddy; then
+        log_error "Caddy 服务未运行"
+        return 1
+    fi
+
+    return 0
+}
+
+reload_caddy_config() {
+    validate_caddyfile || return 1
+    start_or_reload_caddy || return 1
+    return 0
+}
+
+install_or_update_caddy_core() {
+    log_info "开始安装/更新 Caddy 通用 HTTPS 入口..."
 
     if ! check_internet; then
         log_error "无法连接到互联网"
         return 1
     fi
 
-    if ! check_sui_installed; then
-        log_warning "未检测到 s-ui,建议先安装 s-ui 再配置 Caddy 反代"
-        if ! ask_yes_no "是否仍继续配置 Caddy?" "n"; then
-            return 0
-        fi
-    fi
-
-    collect_proxy_config || return 1
+    collect_global_email
 
     log_step 1 8 "停止旧 NPM 服务(如存在)"
     stop_legacy_npm_if_needed || return 1
@@ -727,13 +1015,13 @@ install() {
 
     log_step 4 8 "创建运行用户和目录"
     ensure_caddy_user_and_dirs || return 1
+    ensure_caddy_layout || return 1
 
     log_step 5 8 "写入 systemd 服务"
     write_systemd_service || return 1
 
-    log_step 6 8 "生成 Caddyfile"
-    hash_basic_auth_password || return 1
-    write_caddyfile || return 1
+    log_step 6 8 "生成 Caddy 主配置"
+    write_main_caddyfile || return 1
     validate_caddyfile || return 1
 
     log_step 7 8 "配置防火墙"
@@ -741,15 +1029,291 @@ install() {
 
     log_step 8 8 "启动 Caddy"
     start_or_reload_caddy || return 1
+    verify_caddy_service || return 1
+    write_install_flag
 
-    if verify_installation; then
-        write_install_flag
-        log_success "$MODULE_NAME 安装和 s-ui 反代配置完成!"
-        show_post_install_info
+    log_success "Caddy 通用 HTTPS 入口已就绪"
+    return 0
+}
+
+ensure_caddy_core_ready() {
+    if ! command -v caddy >/dev/null 2>&1 || [ ! -f "$CADDY_SERVICE" ] || [ ! -f "$CADDYFILE" ]; then
+        install_or_update_caddy_core || return 1
         return 0
     fi
 
-    return 1
+    ensure_caddy_user_and_dirs || return 1
+    ensure_caddy_layout || return 1
+    write_systemd_service || return 1
+
+    if ! grep -Fxq "import $CADDY_APPS_DIR/*.caddy" "$CADDYFILE" 2>/dev/null; then
+        log_warning "当前 Caddyfile 未启用 apps.d 导入"
+        if ! ask_yes_no "是否备份并切换为 VPS Tools 通用 Caddy 入口?" "y"; then
+            return 1
+        fi
+        collect_global_email
+        write_main_caddyfile || return 1
+    fi
+
+    reload_caddy_config || return 1
+    write_install_flag
+    return 0
+}
+
+show_app_post_install_info() {
+    local app_name="$1"
+    local app_type="$2"
+    local title="$app_type HTTPS 入口配置完成"
+
+    cat << EOF
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ${GREEN}${BOLD}$title${NC}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+${BOLD}应用标识:${NC} $app_name
+${BOLD}公网访问:${NC} ${CYAN}https://$CADDY_DOMAIN/${NC}
+${BOLD}配置片段:${NC} $CADDY_APPS_DIR/${app_name}.caddy
+${BOLD}状态记录:${NC} $APPS_STATE_DIR/${app_name}.conf
+
+${BOLD}端口策略:${NC}
+  Caddy 对公网只需要 80/tcp 和 443/tcp
+  80 仅用于 ACME HTTP-01 证书验证和 HTTP->HTTPS 跳转
+  应用自身端口建议只监听本机或内网
+
+EOF
+}
+
+add_sui_proxy() {
+    local app_name
+    local default_app_name
+
+    reset_app_config_defaults
+    ensure_caddy_core_ready || return 1
+
+    if ! check_sui_installed; then
+        log_warning "未检测到 s-ui,建议先安装 s-ui 再配置反代"
+        if ! ask_yes_no "是否仍继续添加 s-ui 入口?" "n"; then
+            return 0
+        fi
+    fi
+
+    collect_sui_proxy_config || return 1
+    default_app_name="$(default_app_name_from_domain "$CADDY_DOMAIN")"
+    prompt_app_name "$default_app_name" || return 1
+    app_name="$CADDY_SELECTED_APP_NAME"
+
+    if ! confirm_overwrite_app "$app_name"; then
+        log_info "已取消添加 s-ui 入口"
+        return 0
+    fi
+
+    hash_basic_auth_password || return 1
+    write_sui_app_caddyfile "$app_name" || return 1
+    reload_caddy_config || return 1
+    show_post_install_info "$app_name"
+    return 0
+}
+
+add_nezha_proxy() {
+    local app_name
+    local default_app_name
+
+    reset_app_config_defaults
+    ensure_caddy_core_ready || return 1
+    collect_nezha_proxy_config || return 1
+    default_app_name="$(default_app_name_from_domain "$CADDY_DOMAIN")"
+    prompt_app_name "$default_app_name" || return 1
+    app_name="$CADDY_SELECTED_APP_NAME"
+
+    if ! confirm_overwrite_app "$app_name"; then
+        log_info "已取消添加 Nezha 入口"
+        return 0
+    fi
+
+    write_nezha_app_caddyfile "$app_name" || return 1
+    reload_caddy_config || return 1
+    show_app_post_install_info "$app_name" "Nezha"
+    return 0
+}
+
+add_custom_proxy() {
+    local app_name
+    local default_app_name
+
+    reset_app_config_defaults
+    ensure_caddy_core_ready || return 1
+    collect_custom_proxy_config || return 1
+    default_app_name="$(default_app_name_from_domain "$CADDY_DOMAIN")"
+    prompt_app_name "$default_app_name" || return 1
+    app_name="$CADDY_SELECTED_APP_NAME"
+
+    if ! confirm_overwrite_app "$app_name"; then
+        log_info "已取消添加自定义应用入口"
+        return 0
+    fi
+
+    write_custom_app_caddyfile "$app_name" || return 1
+    reload_caddy_config || return 1
+    show_app_post_install_info "$app_name" "自定义应用"
+    return 0
+}
+
+list_caddy_apps() {
+    local state
+
+    if [ ! -d "$APPS_STATE_DIR" ] || ! ls "$APPS_STATE_DIR"/*.conf >/dev/null 2>&1; then
+        log_info "暂无由 VPS Tools 管理的 Caddy 应用入口"
+        return 0
+    fi
+
+    echo
+    echo -e "${BOLD}已管理的 Caddy 应用入口:${NC}"
+    for state in "$APPS_STATE_DIR"/*.conf; do
+        [ -f "$state" ] || continue
+        echo
+        grep -E "^(Name|Type|Domain|Upstream|Subscription|BasicAuth|CloudflareMode|PublicPorts|CreatedAt):" "$state" | sed 's/^/  /'
+    done
+    echo
+}
+
+delete_caddy_app() {
+    local app_name
+    local app_file
+    local state_file
+
+    list_caddy_apps
+    printf "${BLUE}请输入要删除的应用标识: ${NC}"
+    read -r app_name
+
+    if [ -z "$app_name" ]; then
+        log_info "已取消删除"
+        return 0
+    fi
+
+    app_name="$(normalize_app_name "$app_name")"
+
+    if ! is_valid_app_name "$app_name"; then
+        log_error "应用标识无效"
+        return 1
+    fi
+
+    app_file="$CADDY_APPS_DIR/${app_name}.caddy"
+    state_file="$APPS_STATE_DIR/${app_name}.conf"
+
+    if [ ! -f "$app_file" ] && [ ! -f "$state_file" ]; then
+        log_warning "未找到应用入口: $app_name"
+        return 0
+    fi
+
+    if ! ask_yes_no "确定删除 $app_name 的 Caddy 入口配置吗?" "n"; then
+        log_info "已取消删除"
+        return 0
+    fi
+
+    rm -f "$app_file" "$state_file"
+    reload_caddy_config || return 1
+    log_success "已删除应用入口: $app_name"
+    return 0
+}
+
+show_caddy_manage_menu() {
+    clear 2>/dev/null || true
+    cat << EOF
+${CYAN}================================================================${NC}
+           ${BOLD}${GREEN}Caddy HTTPS 入口管理${NC}
+${CYAN}================================================================${NC}
+
+  ${BOLD}1${NC}. 安装/更新 Caddy 核心
+  ${BOLD}2${NC}. 添加/更新 s-ui HTTPS 入口
+  ${BOLD}3${NC}. 添加/更新 Nezha Dashboard 入口
+  ${BOLD}4${NC}. 添加/更新自定义应用入口
+  ${BOLD}5${NC}. 查看已管理入口
+  ${BOLD}6${NC}. 删除应用入口
+  ${BOLD}7${NC}. 校验并重载 Caddy
+
+  ${BOLD}0${NC}. 返回主菜单
+
+${CYAN}================================================================${NC}
+EOF
+}
+
+manage() {
+    local choice
+
+    while true; do
+        show_caddy_manage_menu
+        printf "${BLUE}请输入选项 [0-7]: ${NC}"
+        read -r choice
+
+        case "$choice" in
+            1)
+                install_or_update_caddy_core
+                pause_caddy_menu
+                ;;
+            2)
+                add_sui_proxy
+                pause_caddy_menu
+                ;;
+            3)
+                add_nezha_proxy
+                pause_caddy_menu
+                ;;
+            4)
+                add_custom_proxy
+                pause_caddy_menu
+                ;;
+            5)
+                list_caddy_apps
+                pause_caddy_menu
+                ;;
+            6)
+                delete_caddy_app
+                pause_caddy_menu
+                ;;
+            7)
+                ensure_caddy_core_ready
+                pause_caddy_menu
+                ;;
+            0)
+                return 0
+                ;;
+            *)
+                log_error "无效选项"
+                pause_caddy_menu
+                ;;
+        esac
+    done
+}
+
+# ============ 安装函数 ============
+install() {
+    log_info "开始安装 $MODULE_NAME..."
+
+    if check_installed; then
+        log_warning "$MODULE_NAME 已安装或已配置"
+        if command -v caddy >/dev/null 2>&1; then
+            log_info "当前版本: $(caddy version 2>/dev/null | awk '{print $1}')"
+        fi
+
+        if ask_yes_no "是否安装/更新 Caddy 核心到最新版?" "y"; then
+            install_or_update_caddy_core || return 1
+        else
+            ensure_caddy_core_ready || return 1
+        fi
+    else
+        install_or_update_caddy_core || return 1
+    fi
+
+    if check_sui_installed; then
+        if ask_yes_no "是否现在添加/更新 s-ui HTTPS 入口?" "y"; then
+            add_sui_proxy || return 1
+        fi
+    else
+        log_warning "未检测到 s-ui;后续可在 Caddy 管理菜单中添加 s-ui 或其他应用入口"
+    fi
+
+    log_success "$MODULE_NAME 安装流程完成"
+    return 0
 }
 
 # ============ 卸载函数 ============
@@ -778,7 +1342,7 @@ uninstall() {
     rm -f "$CADDY_BIN" "$INSTALL_FLAG"
 
     if [ "$keep_data" = false ]; then
-        rm -rf "$CADDY_DIR" "$CADDY_DATA_DIR" "$CADDY_LOG_DIR"
+        rm -rf "$CADDY_DIR" "$CADDY_DATA_DIR" "$CADDY_LOG_DIR" "$APPS_STATE_DIR"
     fi
 
     log_success "$MODULE_NAME 已卸载"
@@ -800,7 +1364,16 @@ status() {
         fi
 
         if [ -f "$INSTALL_FLAG" ]; then
-            grep -E "^(Domain|Dashboard|Subscription|BasicAuth|CloudflareMode|PublicPorts):" "$INSTALL_FLAG" | sed 's/^/  /'
+            grep -E "^(Email|Caddyfile|AppsDir|CloudflareMode|PublicPorts|InstalledAt):" "$INSTALL_FLAG" | sed 's/^/  /'
+        fi
+
+        if [ -d "$APPS_STATE_DIR" ] && ls "$APPS_STATE_DIR"/*.conf >/dev/null 2>&1; then
+            echo "  应用入口:"
+            for state in "$APPS_STATE_DIR"/*.conf; do
+                [ -f "$state" ] || continue
+                printf "    - "
+                grep -E "^(Name|Type|Domain):" "$state" | paste -sd ' ' - | sed 's/Name: //; s/ Type: / (/; s/ Domain: /) /'
+            done
         fi
     else
         echo -e "${RED}✗${NC} $MODULE_NAME: 未安装"
@@ -809,6 +1382,7 @@ status() {
 
 # ============ 安装后信息 ============
 show_post_install_info() {
+    local app_name="${1:-s-ui}"
     local auth_note="未启用"
     if [ "$CADDY_ENABLE_BASIC_AUTH" = "true" ]; then
         auth_note="已启用,用户名: $CADDY_AUTH_USER"
@@ -827,6 +1401,7 @@ ${BOLD}本地反代:${NC}
   Dashboard -> 127.0.0.1:$CADDY_DASHBOARD_PORT
   订阅     -> 127.0.0.1:$CADDY_SUBSCRIPTION_PORT
   Basic Auth: $auth_note
+  应用标识 : $app_name
 
 ${BOLD}端口策略:${NC}
   开放 80/tcp 和 443/tcp
@@ -842,6 +1417,7 @@ ${BOLD}管理命令:${NC}
 
 ${BOLD}配置文件:${NC}
   Caddyfile: $CADDYFILE
+  应用片段: $CADDY_APPS_DIR/${app_name}.caddy
   证书数据: $CADDY_DATA_DIR
   访问日志: $CADDY_LOG_DIR/s-ui-access.log
 
@@ -857,8 +1433,13 @@ if [ "${BASH_SOURCE[0]}" -ef "$0" ]; then
 
     case "${1:-install}" in
         install) install ;;
+        manage) manage ;;
+        add-sui) add_sui_proxy ;;
+        add-nezha) add_nezha_proxy ;;
+        add-custom) add_custom_proxy ;;
+        reload) reload_caddy_config ;;
         uninstall) uninstall ;;
         status) status ;;
-        *) echo "用法: $0 {install|uninstall|status}"; exit 1 ;;
+        *) echo "用法: $0 {install|manage|add-sui|add-nezha|add-custom|reload|uninstall|status}"; exit 1 ;;
     esac
 fi

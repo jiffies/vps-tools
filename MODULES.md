@@ -70,15 +70,17 @@
 - **状态**: 已实现
 
 ### caddy.sh ✅
-- **功能**: 安装Caddy并为s-ui配置公网HTTPS访问
+- **功能**: 安装Caddy并管理通用公网HTTPS应用入口
 - **包含**:
   - 从Caddy官方下载接口安装最新版静态二进制
   - 创建systemd服务
-  - 引导输入域名、dashboard端口(默认2095)、订阅端口(默认2096)
-  - 生成适配 Cloudflare 橙云的Caddyfile
+  - 生成主 Caddyfile 并通过 `/etc/caddy/apps.d/*.caddy` 导入应用片段
+  - 支持 s-ui dashboard(默认2095)、订阅端口(默认2096)
+  - 支持 Nezha Dashboard(默认8008)和自定义应用反代
+  - 引导用户确认域名 A 记录内容指向 VPS 公网 IP 且 Cloudflare 橙云已开启
   - 可选Basic Auth,默认不启用
 - **安全改进**:
-  - 默认开放80/tcp和443/tcp
+  - 交互确认是否开放80/tcp和443/tcp
   - 80仅用于HTTP-01证书验证和HTTP->HTTPS跳转
   - 禁用TLS-ALPN challenge,避免Cloudflare橙云拦截源站验证
   - 明确区分公网IP和内网IP,提醒Cloudflare A记录内容指向公网IP
@@ -218,7 +220,7 @@ caddy (无依赖,建议在s-ui之后配置)
 
 ### 从 installApp.sh 迁移
 - ✅ docker: Docker安装部分
-- ✅ caddy: Caddy安装与s-ui HTTPS反代
+- ✅ caddy: Caddy通用 HTTPS 入口管理
 - ✅ s-ui: s-ui安装部分
 
 ### 改进点

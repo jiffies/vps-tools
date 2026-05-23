@@ -137,8 +137,13 @@ detect_service_ports() {
     # 检测 Caddy HTTP/HTTPS 反代
     local caddy_flag="/var/log/vps-tools/install-caddy.flag"
     if [ -f "$caddy_flag" ]; then
-        ALLOWED_PORTS+=("80/tcp" "443/tcp")
-        log_info "检测到 Caddy HTTP/HTTPS 端口: 80, 443"
+        log_info "检测到 Caddy 通用 HTTPS 入口"
+        if ask_yes_no "是否开放 Caddy 所需的 80/tcp 和 443/tcp? (80仅用于证书验证和跳转,443用于HTTPS访问)" "y"; then
+            ALLOWED_PORTS+=("80/tcp" "443/tcp")
+            log_info "将开放 Caddy HTTP/HTTPS 端口: 80, 443"
+        else
+            log_warning "已跳过 Caddy 80/443;Cloudflare 橙云回源和证书签发可能失败"
+        fi
     fi
 
     # 检测s-ui
