@@ -762,6 +762,7 @@ sudo ./modules/install/caddy.sh manage
 # 独立添加入口
 sudo ./modules/install/caddy.sh add-sui
 sudo ./modules/install/caddy.sh repair-sui-sub
+sudo ./modules/install/caddy.sh verify-sui
 sudo ./modules/install/caddy.sh add-nezha
 sudo ./modules/install/caddy.sh add-custom
 
@@ -779,6 +780,9 @@ https://YOUR_DOMAIN:8443/sub-随机路径
 
 # 外部随机路径会由 Caddy 改写到 s-ui 内部 /sub/
 # 例如: /sub-a1b2c3/client-id -> 127.0.0.1:2096/sub/client-id
+
+# 检验通过后会打印 Dashboard 入口和订阅入口
+sudo ./modules/install/caddy.sh verify-sui YOUR_APP_NAME
 
 # 本地目标端口
 127.0.0.1:2095  # dashboard

@@ -11,7 +11,7 @@
 
 # ============ 模块元数据 ============
 MODULE_NAME="Caddy"
-MODULE_VERSION="1.2.1"
+MODULE_VERSION="1.2.2"
 MODULE_DEPS=""
 MODULE_CATEGORY="install"
 MODULE_DESC="安装 Caddy 并管理 8443 应用 HTTPS 入口"
@@ -803,6 +803,76 @@ extract_port_from_upstream() {
     return 1
 }
 
+parse_subscription_path_from_line() {
+    local subscription_line="$1"
+    local path="${subscription_line%% -> *}"
+
+    if [ -n "$path" ] && [ "$path" != "$subscription_line" ]; then
+        echo "$path"
+        return 0
+    fi
+
+    return 1
+}
+
+parse_subscription_upstream_from_line() {
+    local subscription_line="$1"
+    local upstream="${subscription_line##*-> }"
+
+    if [ -n "$upstream" ] && [ "$upstream" != "$subscription_line" ]; then
+        echo "$upstream"
+        return 0
+    fi
+
+    return 1
+}
+
+port_listener_lines() {
+    local port="$1"
+
+    if ! command -v ss >/dev/null 2>&1; then
+        return 1
+    fi
+
+    ss -H -tulpen 2>/dev/null | awk -v port="$port" '$5 ~ ":" port "$" || $5 ~ "\\]:" port "$" {print}'
+}
+
+port_is_listening() {
+    local port="$1"
+    [ -n "$(port_listener_lines "$port")" ]
+}
+
+port_listener_contains() {
+    local port="$1"
+    local pattern="$2"
+
+    port_listener_lines "$port" | grep -qi "$pattern"
+}
+
+ufw_allows_port() {
+    local port="$1"
+
+    command -v ufw >/dev/null 2>&1 || return 1
+    ufw status 2>/dev/null | grep -Eq "(^|[[:space:]])${port}/tcp"
+}
+
+VERIFY_ERRORS=0
+VERIFY_WARNINGS=0
+
+verify_ok() {
+    printf "  ${GREEN}✓${NC} %s\n" "$1"
+}
+
+verify_warn() {
+    VERIFY_WARNINGS=$((VERIFY_WARNINGS + 1))
+    printf "  ${YELLOW}!${NC} %s\n" "$1"
+}
+
+verify_fail() {
+    VERIFY_ERRORS=$((VERIFY_ERRORS + 1))
+    printf "  ${RED}✗${NC} %s\n" "$1"
+}
+
 confirm_overwrite_app() {
     local app_name="$1"
     local app_file="$CADDY_APPS_DIR/${app_name}.caddy"
@@ -1386,6 +1456,317 @@ EOF
     return 0
 }
 
+verify_sui_caddy_setup() {
+    local app_name="${1:-}"
+    local default_app_name
+    local state_file
+    local app_file
+    local domain
+    local dashboard_upstream
+    local dashboard_port
+    local subscription_line
+    local subscription_path
+    local subscription_upstream
+    local subscription_port
+    local subscription_rewrite
+    local subscription_rewrite_target
+    local state_https_port
+    local dashboard_url
+    local subscription_url
+    local curl_code
+    local caddy_validate_log
+
+    VERIFY_ERRORS=0
+    VERIFY_WARNINGS=0
+    reset_app_config_defaults
+
+    if [ -z "$app_name" ]; then
+        default_app_name="$(find_first_sui_app_name 2>/dev/null || true)"
+        default_app_name="${default_app_name:-s-ui}"
+        printf "${BLUE}要检验的 s-ui 应用标识 [默认%s]: ${NC}" "$default_app_name"
+        read -r app_name
+        app_name=${app_name:-$default_app_name}
+    fi
+
+    app_name="$(normalize_app_name "$app_name")"
+    state_file="$APPS_STATE_DIR/${app_name}.conf"
+    app_file="$CADDY_APPS_DIR/${app_name}.caddy"
+
+    cat << EOF
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ${GREEN}${BOLD}s-ui + Caddy 配置检验${NC}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+${BOLD}应用标识:${NC} $app_name
+
+EOF
+
+    if check_sui_installed; then
+        verify_ok "已检测到 s-ui 安装记录"
+    else
+        verify_fail "未检测到 s-ui 安装记录"
+    fi
+
+    if systemctl is-active --quiet s-ui 2>/dev/null || systemctl is-active --quiet x-ui 2>/dev/null; then
+        verify_ok "s-ui 服务正在运行"
+    else
+        verify_fail "s-ui 服务未运行"
+    fi
+
+    if command -v caddy >/dev/null 2>&1; then
+        verify_ok "Caddy 命令存在: $(caddy version 2>/dev/null | awk '{print $1}')"
+    else
+        verify_fail "未找到 caddy 命令"
+    fi
+
+    if systemctl is-active --quiet caddy 2>/dev/null; then
+        verify_ok "Caddy 服务正在运行"
+    else
+        verify_fail "Caddy 服务未运行"
+    fi
+
+    if [ -f "$CADDYFILE" ]; then
+        verify_ok "Caddyfile 存在: $CADDYFILE"
+    else
+        verify_fail "Caddyfile 不存在: $CADDYFILE"
+    fi
+
+    if caddyfile_has_gateway_ports; then
+        verify_ok "Caddy 全局端口为 ${CADDY_HTTP_PORT}/${CADDY_HTTPS_PORT}"
+    else
+        verify_fail "Caddyfile 未配置 http_port ${CADDY_HTTP_PORT} 和 https_port ${CADDY_HTTPS_PORT}"
+    fi
+
+    if grep -Fxq "import $CADDY_APPS_DIR/*.caddy" "$CADDYFILE" 2>/dev/null; then
+        verify_ok "Caddyfile 已导入 apps.d 应用片段"
+    else
+        verify_fail "Caddyfile 未导入 $CADDY_APPS_DIR/*.caddy"
+    fi
+
+    if command -v caddy >/dev/null 2>&1 && [ -f "$CADDYFILE" ]; then
+        caddy_validate_log="$(mktemp)"
+        if caddy validate --config "$CADDYFILE" >"$caddy_validate_log" 2>&1; then
+            verify_ok "Caddyfile 校验通过"
+        else
+            verify_fail "Caddyfile 校验失败"
+            sed 's/^/    /' "$caddy_validate_log"
+        fi
+        rm -f "$caddy_validate_log"
+    fi
+
+    if [ -f "$state_file" ]; then
+        verify_ok "应用状态记录存在: $state_file"
+    else
+        verify_fail "应用状态记录不存在: $state_file"
+    fi
+
+    if [ -f "$app_file" ]; then
+        verify_ok "应用 Caddy 片段存在: $app_file"
+    else
+        verify_fail "应用 Caddy 片段不存在: $app_file"
+    fi
+
+    domain="$(read_state_value "$state_file" "Domain")"
+    dashboard_upstream="$(read_state_value "$state_file" "Upstream")"
+    subscription_line="$(read_state_value "$state_file" "Subscription")"
+    subscription_rewrite="$(read_state_value "$state_file" "SubscriptionRewrite")"
+    state_https_port="$(read_state_value "$state_file" "HTTPSPort")"
+
+    if is_valid_public_domain "$domain"; then
+        CADDY_DOMAIN="$domain"
+        verify_ok "公网域名有效: $domain"
+    else
+        verify_fail "状态记录中的域名无效: ${domain:-空}"
+    fi
+
+    dashboard_port="$(extract_port_from_upstream "$dashboard_upstream" 2>/dev/null || true)"
+    if [ -n "$dashboard_port" ]; then
+        CADDY_DASHBOARD_PORT="$dashboard_port"
+        verify_ok "Dashboard 后端端口: 127.0.0.1:$dashboard_port"
+    else
+        dashboard_port="$DEFAULT_DASHBOARD_PORT"
+        CADDY_DASHBOARD_PORT="$dashboard_port"
+        verify_fail "无法从状态记录解析 Dashboard 后端端口"
+    fi
+
+    if [ -n "$state_https_port" ] && validate_port "$state_https_port" >/dev/null 2>&1; then
+        CADDY_HTTPS_PORT="$state_https_port"
+    fi
+
+    if [ "$CADDY_HTTPS_PORT" = "$DEFAULT_CADDY_HTTPS_PORT" ]; then
+        verify_ok "公网 HTTPS 网关端口: $CADDY_HTTPS_PORT"
+    else
+        verify_warn "公网 HTTPS 网关端口不是默认 ${DEFAULT_CADDY_HTTPS_PORT}: $CADDY_HTTPS_PORT"
+    fi
+
+    if [ -n "$subscription_line" ] && [ "$subscription_line" != "disabled" ]; then
+        CADDY_ENABLE_SUBSCRIPTION="true"
+        subscription_path="$(parse_subscription_path_from_line "$subscription_line" 2>/dev/null || true)"
+        subscription_upstream="$(parse_subscription_upstream_from_line "$subscription_line" 2>/dev/null || true)"
+        subscription_port="$(extract_port_from_upstream "$subscription_upstream" 2>/dev/null || true)"
+        subscription_rewrite_target="${subscription_rewrite##*-> }"
+
+        if is_valid_path_prefix "$subscription_path"; then
+            CADDY_SUBSCRIPTION_PATH="$subscription_path"
+            verify_ok "订阅公网路径存在: $subscription_path"
+        else
+            verify_fail "订阅公网路径无效或缺失"
+        fi
+
+        if [ "$subscription_path" = "$DEFAULT_SUBSCRIPTION_PATH" ] || [ "$subscription_path" = "${DEFAULT_SUBSCRIPTION_PATH}/" ]; then
+            verify_fail "订阅公网路径仍是默认短路径 $DEFAULT_SUBSCRIPTION_PATH,请运行 repair-sui-sub 生成随机路径"
+        fi
+
+        if [ -n "$subscription_port" ]; then
+            CADDY_SUBSCRIPTION_PORT="$subscription_port"
+            verify_ok "订阅后端端口: 127.0.0.1:$subscription_port"
+        else
+            CADDY_SUBSCRIPTION_PORT="$DEFAULT_SUBSCRIPTION_PORT"
+            verify_fail "无法从状态记录解析订阅后端端口"
+        fi
+
+        if [ "$subscription_rewrite_target" = "$DEFAULT_SUI_UPSTREAM_SUBSCRIPTION_PATH" ]; then
+            CADDY_UPSTREAM_SUBSCRIPTION_PATH="$subscription_rewrite_target"
+            verify_ok "订阅路径会 rewrite 到 s-ui 内部 $subscription_rewrite_target"
+        else
+            verify_fail "缺少 SubscriptionRewrite: $subscription_path -> $DEFAULT_SUI_UPSTREAM_SUBSCRIPTION_PATH"
+        fi
+
+        if [ -f "$app_file" ]; then
+            if grep -Fq "reverse_proxy 127.0.0.1:$CADDY_SUBSCRIPTION_PORT" "$app_file"; then
+                verify_ok "Caddy 片段已反代订阅到 127.0.0.1:$CADDY_SUBSCRIPTION_PORT"
+            else
+                verify_fail "Caddy 片段未反代订阅到 127.0.0.1:$CADDY_SUBSCRIPTION_PORT"
+            fi
+
+            if grep -Fq "uri strip_prefix $CADDY_SUBSCRIPTION_PATH" "$app_file" &&
+               grep -Fq "rewrite * $CADDY_UPSTREAM_SUBSCRIPTION_PATH{uri}" "$app_file"; then
+                verify_ok "Caddy 片段已配置订阅路径 rewrite"
+            else
+                verify_fail "Caddy 片段缺少订阅路径 rewrite"
+            fi
+        fi
+    else
+        verify_fail "未启用 s-ui 订阅入口,无法打印订阅链接"
+    fi
+
+    if [ -f "$app_file" ]; then
+        if grep -Fq "reverse_proxy 127.0.0.1:$CADDY_DASHBOARD_PORT" "$app_file"; then
+            verify_ok "Caddy 片段已反代 Dashboard 到 127.0.0.1:$CADDY_DASHBOARD_PORT"
+        else
+            verify_fail "Caddy 片段未反代 Dashboard 到 127.0.0.1:$CADDY_DASHBOARD_PORT"
+        fi
+
+        if [ -n "$CADDY_DOMAIN" ] && grep -Fq "$CADDY_DOMAIN" "$app_file"; then
+            verify_ok "Caddy 片段包含域名 $CADDY_DOMAIN"
+        else
+            verify_fail "Caddy 片段未包含状态记录域名 $CADDY_DOMAIN"
+        fi
+    fi
+
+    if port_is_listening "$CADDY_DASHBOARD_PORT"; then
+        verify_ok "Dashboard 后端端口 $CADDY_DASHBOARD_PORT 正在监听"
+    else
+        verify_fail "Dashboard 后端端口 $CADDY_DASHBOARD_PORT 未监听"
+    fi
+
+    if [ "$CADDY_ENABLE_SUBSCRIPTION" = "true" ]; then
+        if port_is_listening "$CADDY_SUBSCRIPTION_PORT"; then
+            verify_ok "订阅后端端口 $CADDY_SUBSCRIPTION_PORT 正在监听"
+        else
+            verify_fail "订阅后端端口 $CADDY_SUBSCRIPTION_PORT 未监听"
+        fi
+    fi
+
+    if port_listener_contains "$CADDY_HTTPS_PORT" "caddy"; then
+        verify_ok "Caddy 正在监听 $CADDY_HTTPS_PORT/tcp"
+    else
+        verify_fail "未检测到 Caddy 监听 $CADDY_HTTPS_PORT/tcp"
+    fi
+
+    if port_listener_contains 443 "caddy"; then
+        verify_fail "443/tcp 仍被 Caddy 占用,Reality 会冲突"
+    else
+        verify_ok "443/tcp 未被 Caddy 占用"
+    fi
+
+    if port_is_listening 443; then
+        verify_ok "443/tcp 有服务监听,可用于 Reality 入站"
+    else
+        verify_warn "443/tcp 暂无服务监听;如果还未创建 Reality 入站,这是正常的"
+    fi
+
+    if ufw_allows_port "$CADDY_HTTP_PORT"; then
+        verify_ok "UFW 已允许 ${CADDY_HTTP_PORT}/tcp"
+    else
+        verify_warn "UFW 未显示允许 ${CADDY_HTTP_PORT}/tcp;证书 HTTP-01 验证可能失败"
+    fi
+
+    if ufw_allows_port "$CADDY_HTTPS_PORT"; then
+        verify_ok "UFW 已允许 ${CADDY_HTTPS_PORT}/tcp"
+    else
+        verify_warn "UFW 未显示允许 ${CADDY_HTTPS_PORT}/tcp;公网 Dashboard 可能不可达"
+    fi
+
+    if ufw_allows_port "$CADDY_DASHBOARD_PORT"; then
+        verify_warn "UFW 允许了 ${CADDY_DASHBOARD_PORT}/tcp;Dashboard 后端建议不要直开公网"
+    else
+        verify_ok "UFW 未直接开放 Dashboard 后端端口 $CADDY_DASHBOARD_PORT"
+    fi
+
+    if [ "$CADDY_ENABLE_SUBSCRIPTION" = "true" ]; then
+        if ufw_allows_port "$CADDY_SUBSCRIPTION_PORT"; then
+            verify_warn "UFW 允许了 ${CADDY_SUBSCRIPTION_PORT}/tcp;订阅后端建议不要直开公网"
+        else
+            verify_ok "UFW 未直接开放订阅后端端口 $CADDY_SUBSCRIPTION_PORT"
+        fi
+    fi
+
+    if command -v curl >/dev/null 2>&1; then
+        curl_code="$(curl -fsS -o /dev/null -w '%{http_code}' --max-time 5 "http://127.0.0.1:$CADDY_DASHBOARD_PORT/app/" 2>/dev/null || true)"
+        case "$curl_code" in
+            2*|3*|401|403) verify_ok "Dashboard 本机 HTTP 探测返回 $curl_code" ;;
+            "") verify_fail "Dashboard 本机 HTTP 探测失败" ;;
+            *) verify_warn "Dashboard 本机 HTTP 探测返回 $curl_code" ;;
+        esac
+    else
+        verify_warn "未安装 curl,跳过本机 HTTP 探测"
+    fi
+
+    echo
+    if [ "$VERIFY_ERRORS" -eq 0 ]; then
+        dashboard_url="$(format_caddy_https_url "$CADDY_DOMAIN" "/app/")"
+        subscription_url="$(format_caddy_https_url "$CADDY_DOMAIN" "$CADDY_SUBSCRIPTION_PATH")"
+
+        cat << EOF
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ${GREEN}${BOLD}检验通过${NC}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+${BOLD}Dashboard 入口:${NC}
+  ${CYAN}$dashboard_url${NC}
+
+${BOLD}订阅入口:${NC}
+  ${CYAN}$subscription_url${NC}
+
+${BOLD}完整订阅链接格式:${NC}
+  ${CYAN}${subscription_url}/<s-ui订阅ID>${NC}
+  ${CYAN}${subscription_url}/<s-ui订阅ID>?format=json${NC}
+  ${CYAN}${subscription_url}/<s-ui订阅ID>?format=clash${NC}
+
+${YELLOW}提示:${NC} 如果 s-ui 面板生成的是 /sub/<订阅ID>,把 /sub 替换成上面的随机订阅入口即可。
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+EOF
+        if [ "$VERIFY_WARNINGS" -gt 0 ]; then
+            log_warning "检验通过,但有 $VERIFY_WARNINGS 个提示项需要留意"
+        fi
+        return 0
+    fi
+
+    log_error "检验未通过: $VERIFY_ERRORS 个错误, $VERIFY_WARNINGS 个提示"
+    log_info "常用修复: sudo ./modules/install/caddy.sh repair-sui-sub"
+    return 1
+}
+
 add_nezha_proxy() {
     local app_name
     local default_app_name
@@ -1511,6 +1892,7 @@ ${CYAN}================================================================${NC}
   ${BOLD}6${NC}. 删除应用入口
   ${BOLD}7${NC}. 校验并重载 Caddy
   ${BOLD}8${NC}. 修复 s-ui 订阅随机路径入口
+  ${BOLD}9${NC}. 检验 s-ui + Caddy 配置并打印入口
 
   ${BOLD}0${NC}. 返回主菜单
 
@@ -1523,7 +1905,7 @@ manage() {
 
     while true; do
         show_caddy_manage_menu
-        printf "${BLUE}请输入选项 [0-8]: ${NC}"
+        printf "${BLUE}请输入选项 [0-9]: ${NC}"
         read -r choice
 
         case "$choice" in
@@ -1557,6 +1939,10 @@ manage() {
                 ;;
             8)
                 repair_sui_subscription_proxy
+                pause_caddy_menu
+                ;;
+            9)
+                verify_sui_caddy_setup
                 pause_caddy_menu
                 ;;
             0)
@@ -1734,11 +2120,12 @@ if [ "${BASH_SOURCE[0]}" -ef "$0" ]; then
         manage) manage ;;
         add-sui) add_sui_proxy ;;
         repair-sui-sub) repair_sui_subscription_proxy ;;
+        verify-sui) verify_sui_caddy_setup "${2:-}" ;;
         add-nezha) add_nezha_proxy ;;
         add-custom) add_custom_proxy ;;
         reload) reload_caddy_config ;;
         uninstall) uninstall ;;
         status) status ;;
-        *) echo "用法: $0 {install|manage|add-sui|repair-sui-sub|add-nezha|add-custom|reload|uninstall|status}"; exit 1 ;;
+        *) echo "用法: $0 {install|manage|add-sui|repair-sui-sub|verify-sui|add-nezha|add-custom|reload|uninstall|status}"; exit 1 ;;
     esac
 fi

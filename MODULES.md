@@ -77,6 +77,7 @@
   - 生成主 Caddyfile 并通过 `/etc/caddy/apps.d/*.caddy` 导入应用片段
   - 支持 s-ui dashboard(默认2095),订阅入口默认不公开、可选长随机路径公开到2096
   - 订阅入口自动将外部随机路径 rewrite 到 s-ui 内部 `/sub/`
+  - 提供 s-ui + Caddy 配置检验,成功后打印 Dashboard 和订阅入口
   - 支持 Nezha Dashboard(默认8008)和自定义应用反代
   - 引导用户确认域名 A 记录内容指向 VPS 公网 IP 且 Cloudflare 橙云已开启
   - 可选Basic Auth,默认不启用
