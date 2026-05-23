@@ -763,7 +763,9 @@ https://YOUR_DOMAIN/sub
 
 ### 证书与域名
 ```bash
-# 域名A记录必须指向VPS公网IP,不是10.x/172.16-31.x/192.168.x内网IP
+# Cloudflare DNS 中 A 记录内容必须填 VPS 公网 IP,不是10.x/172.16-31.x/192.168.x内网IP
+# 记录状态建议开启 Proxied / 橙云
+# Cloudflare SSL/TLS 模式建议使用 Full (strict)
 
 # 查看公网IP
 curl -fsS https://api.ipify.org
@@ -771,7 +773,8 @@ curl -fsS https://api.ipify.org
 # 查看证书数据目录
 sudo ls -la /var/lib/caddy
 
-# Caddy模块默认只使用443/tcp,证书签发依赖TLS-ALPN
+# Caddy模块默认使用80/tcp做HTTP-01验证和跳转,443/tcp做HTTPS访问
+sudo ufw allow 80/tcp comment 'Caddy HTTP'
 sudo ufw allow 443/tcp comment 'Caddy HTTPS'
 ```
 

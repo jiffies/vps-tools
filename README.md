@@ -7,8 +7,8 @@
 - **🎯 一键操作**: 一键初始化VPS或安装全部应用
 - **🧩 模块化设计**: 每个功能独立模块,易于扩展和维护
 - **🔐 安全优先**: 修复了所有已知安全问题
-  - Caddy 通过 443 为 s-ui 提供 HTTPS 反代和自动证书
-  - 安装时区分公网 IP 与内网 IP,提示域名 A 记录指向公网 IP
+  - Caddy 适配 Cloudflare 橙云,通过 80/443 自动申请源站证书
+  - 安装时提醒域名 A 记录内容指向公网 IP,并开启 Cloudflare 橙云
   - Docker GPG密钥使用HTTPS下载
   - SSH配置包含完整的安全参数
 - **📊 交互式菜单**: 彩色UI,清晰的状态显示
@@ -122,9 +122,10 @@ vps-tools/
 ### 已修复的P0级别问题
 
 1. **Caddy公网HTTPS访问**
-   - ✅ 仅开放 `443/tcp`
-   - ✅ 证书签发使用TLS-ALPN,不要求开放80端口
-   - ✅ 安装时提醒域名A记录必须指向VPS公网IP,避免误用内网IP
+   - ✅ 适配 Cloudflare Proxied/橙云
+   - ✅ 开放 `80/tcp` 用于 HTTP-01 验证和 HTTP->HTTPS 跳转
+   - ✅ 开放 `443/tcp` 用于实际 HTTPS 访问
+   - ✅ 安装时提醒域名 A 记录内容必须指向 VPS 公网 IP
    - ✅ 可选Basic Auth,默认不启用以减少重复登录
 
 2. **Docker GPG密钥下载安全**
@@ -244,7 +245,8 @@ echo "$(date '+%Y-%m-%d %H:%M:%S')" > "$INSTALL_FLAG"
 # 选择 "12. 安装Docker"
 # 选择 "14. 安装s-ui"
 # 选择 "13. 安装Caddy"
-# 按提示输入已解析到公网IP的域名、dashboard端口和订阅端口
+# 按提示确认 Cloudflare A 记录内容指向公网IP且橙云已开启
+# 再输入域名、dashboard端口和订阅端口
 ```
 
 ### 示例3: 查看服务状态

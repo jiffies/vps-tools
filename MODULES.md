@@ -75,12 +75,13 @@
   - 从Caddy官方下载接口安装最新版静态二进制
   - 创建systemd服务
   - 引导输入域名、dashboard端口(默认2095)、订阅端口(默认2096)
-  - 生成只使用443的Caddyfile
+  - 生成适配 Cloudflare 橙云的Caddyfile
   - 可选Basic Auth,默认不启用
 - **安全改进**:
-  - 默认只开放443/tcp
-  - 证书签发使用TLS-ALPN,不要求开放80
-  - 明确区分公网IP和内网IP,提醒域名A记录指向公网IP
+  - 默认开放80/tcp和443/tcp
+  - 80仅用于HTTP-01证书验证和HTTP->HTTPS跳转
+  - 禁用TLS-ALPN challenge,避免Cloudflare橙云拦截源站验证
+  - 明确区分公网IP和内网IP,提醒Cloudflare A记录内容指向公网IP
 - **状态**: 已实现
 
 ### s-ui.sh ✅

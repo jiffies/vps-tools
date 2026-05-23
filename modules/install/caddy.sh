@@ -5,7 +5,7 @@
 # 功能:
 # - 从 Caddy 官方下载接口安装最新版静态二进制
 # - 创建 systemd 服务,由非 root 的 caddy 用户运行
-# - 生成只使用 443 的 Caddyfile,通过 TLS-ALPN 自动签发证书
+# - 生成适配 Cloudflare 橙云的 Caddyfile,通过 HTTP-01 自动签发源站证书
 # - 反代 s-ui dashboard(默认 2095) 和订阅端口(默认 2096)
 
 # ============ 模块元数据 ============
@@ -207,56 +207,41 @@ show_domain_notice() {
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   ${GREEN}${BOLD}Caddy HTTPS 访问配置${NC}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-${BOLD}请先确认域名 DNS 已配置:${NC}
-  1. 创建 A 记录,指向当前服务器${BOLD}公网 IPv4${NC}: ${GREEN}${ip:-请从云厂商控制台确认}${NC}
-  2. 云厂商安全组/防火墙放行 ${GREEN}443/tcp${NC}
-  3. 本模块默认不开放 80,证书签发使用 TLS-ALPN(443)
+${BOLD}Cloudflare 橙云模式准备事项:${NC}
+  1. 在 Cloudflare DNS 创建 A 记录,内容填当前服务器${BOLD}公网 IPv4${NC}: ${GREEN}${ip:-请从云厂商控制台确认}${NC}
+  2. 将该记录设置为 ${YELLOW}Proxied / 橙云${NC}
+  3. Cloudflare SSL/TLS 模式建议设为 ${GREEN}Full (strict)${NC}
+  4. 云厂商安全组/防火墙放行 ${GREEN}80/tcp${NC} 和 ${GREEN}443/tcp${NC}
 
 ${YELLOW}${BOLD}提示:${NC}
-  DNS 刚修改后可能需要几分钟到数小时传播。
-  如果证书签发失败,优先检查域名解析和 443 入站连通性。
+  80 仅用于 ACME HTTP-01 证书验证和 HTTP 到 HTTPS 跳转。
+  日常访问仍使用 https:// 域名,不要直接暴露 s-ui 的 2095/2096。
 
 EOF
 }
 
-confirm_domain_resolution() {
+confirm_cloudflare_dns_ready() {
     local domain="$1"
-    local server_ip="$2"
     local resolved_ips
 
     resolved_ips="$(resolve_domain_ipv4 "$domain")"
 
-    if [ -z "$resolved_ips" ]; then
+    if [ -n "$resolved_ips" ]; then
+        log_info "$domain 当前公开解析到: $resolved_ips"
+        log_info "如果已开橙云,这里显示 Cloudflare 边缘 IP 是正常现象"
+    else
         log_warning "未查询到 $domain 的 IPv4 解析记录"
-        ask_yes_no "是否仍继续生成 Caddy 配置?" "n"
-        return $?
     fi
 
-    log_info "$domain 当前解析到: $resolved_ips"
-
-    if [ -z "$server_ip" ]; then
-        log_warning "无法自动获取服务器公网 IPv4,请确认 DNS 解析到了云厂商控制台显示的公网 IP"
-        ask_yes_no "是否继续生成 Caddy 配置?" "n"
-        return $?
-    fi
-
-    if ! echo " $resolved_ips " | grep -q " $server_ip "; then
-        log_warning "域名解析结果未包含当前服务器 IP: $server_ip"
-        ask_yes_no "是否仍继续生成 Caddy 配置?" "n"
-        return $?
-    fi
-
-    return 0
+    ask_yes_no "是否已确认 Cloudflare A 记录内容为 VPS 公网 IP 且橙云已开启?" "y"
 }
 
 collect_proxy_config() {
-    local server_ip
     local domain
     local email
     local port
     local path
 
-    server_ip="$(get_public_server_ip 2>/dev/null || true)"
     show_domain_notice
 
     while true; do
@@ -272,7 +257,7 @@ collect_proxy_config() {
         log_error "域名无效,示例: panel.example.com"
     done
 
-    if ! confirm_domain_resolution "$CADDY_DOMAIN" "$server_ip"; then
+    if ! confirm_cloudflare_dns_ready "$CADDY_DOMAIN"; then
         log_info "已取消 Caddy 配置"
         return 1
     fi
@@ -505,16 +490,22 @@ write_caddyfile() {
         backup_file "$CADDYFILE" >/dev/null || return 1
     fi
 
-    cat > "$CADDYFILE" <<EOF
+    if [ -n "$email_line" ]; then
+        cat > "$CADDYFILE" <<EOF
 {
-    auto_https disable_redirects
 $email_line
 }
 
-https://$CADDY_DOMAIN {
+EOF
+    else
+        : > "$CADDYFILE"
+    fi
+
+    cat >> "$CADDYFILE" <<EOF
+$CADDY_DOMAIN {
     tls {
         issuer acme {
-            disable_http_challenge
+            disable_tlsalpn_challenge
         }
     }
 
@@ -551,6 +542,8 @@ validate_caddyfile() {
 }
 
 configure_ufw_for_caddy() {
+    local port
+
     if ! command -v ufw >/dev/null 2>&1; then
         log_info "未安装 UFW,跳过防火墙规则配置"
         return 0
@@ -561,16 +554,18 @@ configure_ufw_for_caddy() {
         return 0
     fi
 
-    if ufw status 2>/dev/null | grep -q "443/tcp"; then
-        log_info "UFW 已存在 443/tcp 规则"
-        return 0
-    fi
+    for port in 80 443; do
+        if ufw status 2>/dev/null | grep -Eq "(^|[[:space:]])${port}/tcp"; then
+            log_info "UFW 已存在 ${port}/tcp 规则"
+            continue
+        fi
 
-    if ufw allow 443/tcp comment 'Caddy HTTPS' >/dev/null 2>&1; then
-        log_success "已开放 443/tcp"
-    else
-        log_warning "自动开放 443/tcp 失败,请手动检查 UFW"
-    fi
+        if ufw allow "${port}/tcp" comment 'Caddy HTTP/HTTPS' >/dev/null 2>&1; then
+            log_success "已开放 ${port}/tcp"
+        else
+            log_warning "自动开放 ${port}/tcp 失败,请手动检查 UFW"
+        fi
+    done
 
     return 0
 }
@@ -600,27 +595,32 @@ stop_legacy_npm_if_needed() {
     return 0
 }
 
-check_port_443_available() {
+check_caddy_ports_available() {
     local listeners
+    local port
 
     if ! command -v ss >/dev/null 2>&1; then
         return 0
     fi
 
-    listeners="$(ss -H -tulpen 2>/dev/null | awk '$5 ~ /:443$/ || $5 ~ /\]:443$/ {print}')"
+    for port in 80 443; do
+        listeners="$(ss -H -tulpen 2>/dev/null | awk -v port="$port" '$5 ~ ":" port "$" || $5 ~ "\\]:" port "$" {print}')"
 
-    if [ -z "$listeners" ]; then
-        return 0
-    fi
+        if [ -z "$listeners" ]; then
+            continue
+        fi
 
-    if echo "$listeners" | grep -qi "caddy"; then
-        return 0
-    fi
+        if echo "$listeners" | grep -qi "caddy"; then
+            continue
+        fi
 
-    log_warning "检测到 443 端口已被占用:"
-    echo "$listeners" | sed 's/^/  /'
+        log_warning "检测到 ${port} 端口已被占用:"
+        echo "$listeners" | sed 's/^/  /'
 
-    ask_yes_no "是否仍继续? Caddy 启动可能失败" "n"
+        ask_yes_no "是否仍继续? Caddy 启动或证书签发可能失败" "n" || return 1
+    done
+
+    return 0
 }
 
 start_or_reload_caddy() {
@@ -657,6 +657,11 @@ verify_installation() {
         return 1
     fi
 
+    if ! wait_for_port localhost 80 20; then
+        log_warning "80 端口暂未就绪,证书 HTTP-01 验证可能失败"
+        return 1
+    fi
+
     if ! wait_for_port localhost 443 20; then
         log_warning "443 端口暂未就绪,请检查 Caddy 日志"
         return 1
@@ -676,7 +681,8 @@ Domain: $CADDY_DOMAIN
 Dashboard: 127.0.0.1:$CADDY_DASHBOARD_PORT
 Subscription: $CADDY_SUBSCRIPTION_PATH -> 127.0.0.1:$CADDY_SUBSCRIPTION_PORT
 BasicAuth: $CADDY_ENABLE_BASIC_AUTH
-HttpsOnly: true
+CloudflareMode: orange-cloud-http01
+PublicPorts: 80/tcp 443/tcp
 InstalledAt: $(date '+%Y-%m-%d %H:%M:%S')
 EOF
 }
@@ -713,8 +719,8 @@ install() {
     log_step 1 8 "停止旧 NPM 服务(如存在)"
     stop_legacy_npm_if_needed || return 1
 
-    log_step 2 8 "检查 443 端口"
-    check_port_443_available || return 1
+    log_step 2 8 "检查 80/443 端口"
+    check_caddy_ports_available || return 1
 
     log_step 3 8 "安装 Caddy 最新版"
     install_caddy_binary || return 1
@@ -794,7 +800,7 @@ status() {
         fi
 
         if [ -f "$INSTALL_FLAG" ]; then
-            grep -E "^(Domain|Dashboard|Subscription|BasicAuth):" "$INSTALL_FLAG" | sed 's/^/  /'
+            grep -E "^(Domain|Dashboard|Subscription|BasicAuth|CloudflareMode|PublicPorts):" "$INSTALL_FLAG" | sed 's/^/  /'
         fi
     else
         echo -e "${RED}✗${NC} $MODULE_NAME: 未安装"
@@ -823,9 +829,10 @@ ${BOLD}本地反代:${NC}
   Basic Auth: $auth_note
 
 ${BOLD}端口策略:${NC}
-  仅使用 443/tcp
-  已禁用 HTTP-01 challenge 和 HTTP->HTTPS 跳转
-  证书签发依赖 TLS-ALPN challenge,请确保公网 443 可访问
+  开放 80/tcp 和 443/tcp
+  80 仅用于 ACME HTTP-01 证书验证和 HTTP->HTTPS 跳转
+  已禁用 TLS-ALPN challenge,适配 Cloudflare 橙云代理
+  日常访问请使用 HTTPS
 
 ${BOLD}管理命令:${NC}
   ${CYAN}systemctl status caddy${NC}             # 查看服务状态

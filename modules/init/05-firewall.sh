@@ -134,17 +134,17 @@ detect_ssh_port() {
 detect_service_ports() {
     ALLOWED_PORTS=()
 
-    # 检测 Caddy HTTPS 反代
+    # 检测 Caddy HTTP/HTTPS 反代
     local caddy_flag="/var/log/vps-tools/install-caddy.flag"
     if [ -f "$caddy_flag" ]; then
-        ALLOWED_PORTS+=("443/tcp")
-        log_info "检测到 Caddy HTTPS 端口: 443"
+        ALLOWED_PORTS+=("80/tcp" "443/tcp")
+        log_info "检测到 Caddy HTTP/HTTPS 端口: 80, 443"
     fi
 
     # 检测s-ui
     local sui_flag="/var/log/vps-tools/install-s-ui.flag"
     if [ -f "$sui_flag" ]; then
-        log_info "检测到 s-ui,推荐只通过 Caddy 443 访问,不要直接开放 2095/2096"
+        log_info "检测到 s-ui,推荐只通过 Caddy HTTPS 访问,不要直接开放 2095/2096"
     fi
 }
 
@@ -253,6 +253,7 @@ configure_firewall() {
 
         local comment=""
         case "$port_num" in
+            80) comment="Caddy-HTTP" ;;
             443) comment="Caddy-HTTPS" ;;
             *) comment="Service-$port_num" ;;
         esac
