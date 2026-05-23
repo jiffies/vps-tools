@@ -57,6 +57,7 @@ chmod +x modules/**/*.sh
 
 # 一键安装全部应用
 ./vps-tool.sh --install-all
+# 顺序: Docker -> s-ui -> Nezha -> Tailscale -> Caddy网关
 
 # 查看服务状态
 ./vps-tool.sh --status
@@ -85,7 +86,8 @@ vps-tools/
 │   ├── install/                   # 安装模块
 │   │   ├── docker.sh
 │   │   ├── caddy.sh
-│   │   └── s-ui.sh
+│   │   ├── s-ui.sh
+│   │   └── nezha.sh
 │   └── MODULE_TEMPLATE.sh         # 模块模板
 ├── config/                        # 配置文件
 │   ├── templates/                 # 配置模板
@@ -117,6 +119,7 @@ vps-tools/
 | docker | 安装Docker Engine + Compose V2 | ✅ |
 | caddy | 安装Caddy并管理通用 HTTPS 应用入口 | ✅ |
 | s-ui | 安装s-ui面板 | ✅ |
+| nezha | 安装Nezha Dashboard/Agent | ✅ |
 
 ## 🔒 安全改进
 
@@ -246,6 +249,7 @@ echo "$(date '+%Y-%m-%d %H:%M:%S')" > "$INSTALL_FLAG"
 
 # 选择 "12. 安装Docker"
 # 选择 "14. 安装s-ui"
+# 选择 "15. 安装Nezha",再选择服务端 Dashboard 或客户端 Agent
 # 选择 "13. Caddy HTTPS入口管理"
 # 可安装/更新 Caddy 核心,也可添加 s-ui、Nezha 或自定义应用入口
 # 按提示确认 Cloudflare A 记录内容指向公网IP且橙云已开启
@@ -345,6 +349,7 @@ MIT License
 - [x] Docker安装模块
 - [x] Caddy通用 HTTPS 入口管理
 - [x] s-ui安装模块
+- [x] Nezha Dashboard/Agent安装模块
 - [ ] 完整的SSH配置模块(含安全修复)
 - [ ] Fail2Ban配置模块
 - [ ] 防火墙配置模块

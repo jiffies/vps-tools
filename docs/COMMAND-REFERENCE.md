@@ -13,6 +13,7 @@
 - [ufw-docker](#ufw-docker)
 - [Caddy](#caddy)
 - [s-ui](#s-ui)
+- [Nezha](#nezha)
 - [日志查看](#日志查看)
 - [网络诊断](#网络诊断)
 - [磁盘管理](#磁盘管理)
@@ -45,7 +46,8 @@
 # 示例
 ./modules/init/01-system-update.sh install
 ./modules/install/docker.sh status
-./modules/install/caddy.sh install
+./modules/install/caddy.sh manage
+./modules/install/nezha.sh install
 ```
 
 ### 配置文件
@@ -867,6 +869,65 @@ sudo journalctl -u s-ui -n 100
 
 # 备份
 sudo cp /etc/s-ui/s-ui.db /root/s-ui-backup-$(date +%Y%m%d).db
+```
+
+---
+
+## Nezha
+
+### 基本命令
+```bash
+# 安装 Nezha,会先选择服务端 Dashboard 或客户端 Agent
+sudo ./modules/install/nezha.sh install
+
+# 打开 Nezha 官方管理菜单
+sudo ./modules/install/nezha.sh manage
+
+# 查看状态
+sudo ./modules/install/nezha.sh status
+```
+
+### 官方管理脚本
+```bash
+# VPS Tools 会保存官方脚本到:
+sudo /opt/nezha/nezha.sh
+sudo /opt/nezha/agent.sh
+
+# 服务端常见操作
+sudo /opt/nezha/nezha.sh restart_and_update
+sudo /opt/nezha/nezha.sh show_log
+sudo /opt/nezha/nezha.sh uninstall
+
+# 客户端卸载
+sudo /opt/nezha/agent.sh uninstall
+```
+
+### 服务与配置
+```bash
+# 独立安装服务状态
+sudo systemctl status nezha-dashboard
+
+# Dashboard 配置
+sudo ls -la /opt/nezha/dashboard
+sudo vim /opt/nezha/dashboard/data/config.yaml
+
+# 默认本地端口
+http://127.0.0.1:8008/dashboard
+```
+
+### 客户端 Agent
+```bash
+# 安装客户端时需要从 Dashboard 服务器页面复制这些参数
+NZ_SERVER=data.example.com:8008
+NZ_TLS=false
+NZ_CLIENT_SECRET=********
+NZ_UUID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+```
+
+### Caddy公网入口
+```bash
+# 安装 Nezha 服务端后,通过 Caddy 管理器添加公网 HTTPS 入口
+sudo ./modules/install/caddy.sh add-nezha
 ```
 
 ---

@@ -221,7 +221,7 @@ run_init_all() {
 run_install_all() {
     print_header "一键安装全部应用"
 
-    if ! confirm_action "一键安装全部应用" "将安装 Docker、s-ui、Caddy 和 Tailscale"; then
+    if ! confirm_action "一键安装全部应用" "将先安装 Docker、s-ui、Nezha、Tailscale,再安装/配置 Caddy 网关"; then
         return 1
     fi
 
@@ -232,8 +232,9 @@ run_install_all() {
     local modules=(
         "docker"
         "s-ui"
-        "caddy"
+        "nezha"
         "tailscale"
+        "caddy"
     )
 
     run_modules_batch "install" "${modules[@]}"
@@ -292,7 +293,7 @@ run_backup() {
 run_uninstall_menu() {
     while true; do
         show_uninstall_menu
-        choice=$(read_menu_choice "请选择" "[0-4]")
+        choice=$(read_menu_choice "请选择" "[0-5]")
 
         case $choice in
             0)
@@ -308,6 +309,9 @@ run_uninstall_menu() {
                 run_module "install" "s-ui" "uninstall"
                 ;;
             4)
+                run_module "install" "nezha" "uninstall"
+                ;;
+            5)
                 run_module "install" "tailscale" "uninstall"
                 ;;
             *)
@@ -533,6 +537,9 @@ main_loop() {
                 run_module "install" "s-ui" "install"
                 ;;
             15)
+                run_module "install" "nezha" "install"
+                ;;
+            16)
                 run_module "install" "tailscale" "install"
                 ;;
 

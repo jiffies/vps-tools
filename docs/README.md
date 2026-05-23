@@ -63,7 +63,7 @@
 #### 🐳 使用Docker部署应用
 1. 阅读 [DOCKER-UFW-INTEGRATION.md](DOCKER-UFW-INTEGRATION.md)
 2. 安装Docker (选项12)
-3. 安装应用 (选项13-15)
+3. 安装应用 (选项13-16)
 4. 使用 [ufw-docker 命令](COMMAND-REFERENCE.md#ufw-docker) 开放端口
 
 #### ❌ 遇到问题需要排查
@@ -107,7 +107,8 @@ vps-tools/
 │   └── install/                # 安装模块
 │       ├── docker.sh
 │       ├── caddy.sh
-│       └── s-ui.sh
+│       ├── s-ui.sh
+│       └── nezha.sh
 │
 └── lib/                        # 核心库
     ├── common.sh              # 通用函数
@@ -155,6 +156,7 @@ vps-tools/
 - [ufw-docker](COMMAND-REFERENCE.md#ufw-docker)
 - [Caddy](COMMAND-REFERENCE.md#caddy)
 - [s-ui](COMMAND-REFERENCE.md#s-ui)
+- [Nezha](COMMAND-REFERENCE.md#nezha)
 
 ### 运维工具
 - [日志查看](COMMAND-REFERENCE.md#日志查看)

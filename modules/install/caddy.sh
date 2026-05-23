@@ -58,6 +58,13 @@ check_sui_installed() {
     command -v s-ui &>/dev/null || [ -f /var/log/vps-tools/install-s-ui.flag ] || [ -f /usr/local/s-ui/installed.flag ]
 }
 
+check_nezha_installed() {
+    [ -f /var/log/vps-tools/install-nezha.flag ] || \
+    [ -f /opt/nezha/dashboard/docker-compose.yaml ] || \
+    [ -f /opt/nezha/dashboard/app ] || \
+    systemctl list-unit-files 2>/dev/null | grep -q "^nezha-dashboard.service"
+}
+
 pause_caddy_menu() {
     echo
     read -r -p "按 Enter 继续..."
@@ -1120,6 +1127,14 @@ add_nezha_proxy() {
 
     reset_app_config_defaults
     ensure_caddy_core_ready || return 1
+
+    if ! check_nezha_installed; then
+        log_warning "未检测到 Nezha Dashboard,建议先安装 Nezha 再配置反代"
+        if ! ask_yes_no "是否仍继续添加 Nezha 入口?" "n"; then
+            return 0
+        fi
+    fi
+
     collect_nezha_proxy_config || return 1
     default_app_name="$(default_app_name_from_domain "$CADDY_DOMAIN")"
     prompt_app_name "$default_app_name" || return 1

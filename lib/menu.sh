@@ -40,7 +40,8 @@ show_main_menu() {
     printf "  %s. [] 安装Docker\n" "${BOLD}12${NC}"
     printf "  %s. [] Caddy HTTPS入口管理 %s\n" "${BOLD}13${NC}" "${YELLOW}(新一代反代/证书)${NC}"
     printf "  %s. [] 安装s-ui\n" "${BOLD}14${NC}"
-    printf "  %s. [] 安装Tailscale\n" "${BOLD}15${NC}"
+    printf "  %s. [] 安装Nezha\n" "${BOLD}15${NC}"
+    printf "  %s. [] 安装Tailscale\n" "${BOLD}16${NC}"
     printf "\n"
     printf "%s\n" "${YELLOW}[系统管理]${NC}"
     printf "  %s. [] 查看服务状态\n" "${BOLD}21${NC}"
@@ -68,7 +69,8 @@ show_uninstall_menu() {
   ${BOLD}1${NC}. Docker
   ${BOLD}2${NC}. Caddy
   ${BOLD}3${NC}. s-ui
-  ${BOLD}4${NC}. Tailscale
+  ${BOLD}4${NC}. Nezha
+  ${BOLD}5${NC}. Tailscale
 
   ${BOLD}0${NC}. 返回主菜单
 

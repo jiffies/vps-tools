@@ -94,6 +94,17 @@
   - 清理临时文件
 - **状态**: 已实现
 
+### nezha.sh ✅
+- **功能**: 安装 Nezha Dashboard/Agent
+- **包含**:
+  - 下载 Nezha 官方管理脚本
+  - 安装前选择服务端 Dashboard 或客户端 Agent
+  - 服务端支持 Docker 和独立安装两种官方安装方式
+  - 客户端 Agent 通过官方 `agent/install.sh` 安装,需要填入 Dashboard 生成的连接参数
+  - 保存 `/opt/nezha/nezha.sh` 作为后续管理入口
+  - 安装完成后提示通过 Caddy HTTPS 入口管理添加公网反代
+- **状态**: 已实现
+
 ---
 
 ## 模块设计特性
@@ -162,7 +173,9 @@ docker (无依赖,按需安装)
   ↓
 s-ui (无依赖)
   ↓
-caddy (无依赖,建议在s-ui之后配置)
+nezha (无依赖,按需选择服务端或客户端)
+  ↓
+caddy (无依赖,建议在应用安装完成后配置网关)
 ```
 
 ---
@@ -222,6 +235,7 @@ caddy (无依赖,建议在s-ui之后配置)
 - ✅ docker: Docker安装部分
 - ✅ caddy: Caddy通用 HTTPS 入口管理
 - ✅ s-ui: s-ui安装部分
+- ✅ nezha: Nezha Dashboard/Agent安装部分
 
 ### 改进点
 - 模块化设计，可单独使用
