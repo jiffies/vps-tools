@@ -5,13 +5,13 @@
 # 功能:
 # - 从 Caddy 官方下载接口安装最新版静态二进制
 # - 创建 systemd 服务,由非 root 的 caddy 用户运行
-# - 生成适配 Cloudflare 橙云的 Caddyfile,通过 HTTP-01 自动签发源站证书
+# - 生成适配 Cloudflare 橙云/灰云直连的 Caddyfile,通过 HTTP-01 自动签发源站证书
 # - 默认使用 8443 提供 HTTPS 面板入口,把 443 留给 s-ui/Xray Reality
-# - 通过 apps.d 片段管理 s-ui、Nezha 和自定义应用反代
+# - 通过 apps.d 片段按域名聚合管理 s-ui、Nezha 和自定义应用反代
 
 # ============ 模块元数据 ============
 MODULE_NAME="Caddy"
-MODULE_VERSION="1.3.0"
+MODULE_VERSION="1.4.0"
 MODULE_DEPS=""
 MODULE_CATEGORY="install"
 MODULE_DESC="安装 Caddy 并管理 8443 应用 HTTPS 入口"
@@ -27,6 +27,7 @@ CADDY_LOG_DIR="/var/log/caddy"
 INSTALL_FLAG="/var/log/vps-tools/install-caddy.flag"
 APPS_STATE_DIR="/var/log/vps-tools/caddy-apps"
 CADDY_DOWNLOAD_BASE="https://caddyserver.com/api/download"
+CADDY_MANAGED_SITE_PREFIX="_vps-tools-"
 
 DEFAULT_DASHBOARD_PORT="2095"
 DEFAULT_SUBSCRIPTION_PORT="2096"
@@ -35,9 +36,14 @@ DEFAULT_NEZHA_PORT="8008"
 DEFAULT_CADDY_HTTP_PORT="80"
 DEFAULT_CADDY_HTTPS_PORT="8443"
 DEFAULT_SUI_UPSTREAM_SUBSCRIPTION_PATH="/sub"
+DEFAULT_CLOUDFLARE_MODE="orange-cloud-http01"
+DEFAULT_ENTRY_MODE="domain"
 
 CADDY_DOMAIN=""
 CADDY_EMAIL=""
+CADDY_CLOUDFLARE_MODE="$DEFAULT_CLOUDFLARE_MODE"
+CADDY_ENTRY_MODE="$DEFAULT_ENTRY_MODE"
+CADDY_PUBLIC_PATH="/"
 CADDY_DASHBOARD_PORT="$DEFAULT_DASHBOARD_PORT"
 CADDY_SUBSCRIPTION_PORT="$DEFAULT_SUBSCRIPTION_PORT"
 CADDY_SUBSCRIPTION_PATH="$DEFAULT_SUBSCRIPTION_PATH"
@@ -291,6 +297,81 @@ default_app_name_from_domain() {
     normalize_app_name "$first_label"
 }
 
+default_app_name_for_entry() {
+    local domain="$1"
+    local suffix="$2"
+    local base
+
+    base="$(default_app_name_from_domain "$domain")"
+    if [ "$CADDY_ENTRY_MODE" = "path" ]; then
+        normalize_app_name "${base}-${suffix}"
+    else
+        echo "$base"
+    fi
+}
+
+cloudflare_mode_label() {
+    case "$1" in
+        gray-cloud-direct) echo "DNS only / 灰云直连" ;;
+        orange-cloud-http01) echo "Proxied / 橙云代理" ;;
+        *) echo "$1" ;;
+    esac
+}
+
+cloudflare_real_ip_value() {
+    case "$1" in
+        gray-cloud-direct) echo "{remote_host}" ;;
+        *) echo "{http.CF-Connecting-IP}" ;;
+    esac
+}
+
+format_nezha_agent_server() {
+    local domain="$1"
+    local port="${2:-$CADDY_HTTPS_PORT}"
+
+    if [ "$port" = "443" ]; then
+        printf "%s" "$domain"
+    else
+        printf "%s:%s" "$domain" "$port"
+    fi
+}
+
+format_public_path_with_slash() {
+    local path="${1:-/}"
+
+    path="$(normalize_path_prefix "$path")"
+    if [ "$path" = "/" ]; then
+        echo "/"
+    else
+        echo "$path/"
+    fi
+}
+
+is_valid_public_path() {
+    local path="$1"
+
+    [ "$path" = "/" ] || is_valid_path_prefix "$path"
+}
+
+site_slug_from_domain() {
+    local domain="$1"
+    local slug
+
+    slug="$(printf "%s" "$domain" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9.-' '-' | tr '.' '-')"
+    while [[ "$slug" == -* ]]; do
+        slug="${slug#-}"
+    done
+    while [[ "$slug" == *- ]]; do
+        slug="${slug%-}"
+    done
+    echo "${slug:-site}"
+}
+
+managed_site_file_for_domain() {
+    local domain="$1"
+    printf "%s/%s%s.caddy" "$CADDY_APPS_DIR" "$CADDY_MANAGED_SITE_PREFIX" "$(site_slug_from_domain "$domain")"
+}
+
 resolve_existing_email() {
     if [ -f "$INSTALL_FLAG" ]; then
         grep "^Email:" "$INSTALL_FLAG" 2>/dev/null | cut -d: -f2- | sed 's/^ *//'
@@ -306,13 +387,13 @@ show_domain_notice() {
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   ${GREEN}${BOLD}Caddy HTTPS 访问配置${NC}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-${BOLD}Cloudflare 橙云模式准备事项:${NC}
+${BOLD}域名准备事项:${NC}
   1. 在 Cloudflare DNS 创建 A 记录,内容填当前服务器${BOLD}公网 IPv4${NC}: ${GREEN}${ip:-请从云厂商控制台确认}${NC}
-  2. 将该记录设置为 ${YELLOW}Proxied / 橙云${NC}
-  3. Cloudflare SSL/TLS 模式建议设为 ${GREEN}Full (strict)${NC}
+  2. 可选择 ${YELLOW}Proxied / 橙云代理${NC} 或 ${YELLOW}DNS only / 灰云直连${NC}
+  3. 橙云模式下 Cloudflare SSL/TLS 模式建议设为 ${GREEN}Full (strict)${NC}
   4. 云厂商安全组/防火墙放行 ${GREEN}${CADDY_HTTP_PORT}/tcp${NC} 和 ${GREEN}${CADDY_HTTPS_PORT}/tcp${NC}
   5. ${YELLOW}443/tcp 留给 s-ui/Xray VLESS Reality,不要让 Caddy 占用${NC}
-  6. 如开启 Cloudflare Always Use HTTPS/重定向规则,请确认不拦截 /.well-known/acme-challenge/*
+  6. 橙云如开启 Always Use HTTPS/重定向规则,请确认不拦截 /.well-known/acme-challenge/*
 
 ${YELLOW}${BOLD}提示:${NC}
   ${CADDY_HTTP_PORT} 仅用于 ACME HTTP-01 证书验证和 HTTP 到 HTTPS 跳转。
@@ -321,20 +402,87 @@ ${YELLOW}${BOLD}提示:${NC}
 EOF
 }
 
+select_cloudflare_mode() {
+    local choice
+
+    echo
+    echo -e "${BOLD}请选择 Cloudflare 记录模式:${NC}"
+    echo "  1. Proxied / 橙云代理 (默认)"
+    echo "  2. DNS only / 灰云直连"
+    echo
+
+    while true; do
+        printf "${BLUE}请输入选项 [1-2, 默认1]: ${NC}"
+        read -r choice
+        choice=${choice:-1}
+
+        case "$choice" in
+            1)
+                CADDY_CLOUDFLARE_MODE="orange-cloud-http01"
+                return 0
+                ;;
+            2)
+                CADDY_CLOUDFLARE_MODE="gray-cloud-direct"
+                return 0
+                ;;
+            *)
+                log_error "请输入 1 或 2"
+                ;;
+        esac
+    done
+}
+
+select_entry_mode() {
+    local app_label="$1"
+    local choice
+
+    echo
+    echo -e "${BOLD}请选择 ${app_label} 入口形态:${NC}"
+    echo "  1. 独立域名入口 (例如 sui.example.com、nezha.example.com)"
+    echo "  2. 同域名路径入口 (例如 example.com/app/、example.com/nezha/)"
+    echo
+
+    while true; do
+        printf "${BLUE}请输入选项 [1-2, 默认1]: ${NC}"
+        read -r choice
+        choice=${choice:-1}
+
+        case "$choice" in
+            1)
+                CADDY_ENTRY_MODE="domain"
+                return 0
+                ;;
+            2)
+                CADDY_ENTRY_MODE="path"
+                return 0
+                ;;
+            *)
+                log_error "请输入 1 或 2"
+                ;;
+        esac
+    done
+}
+
 confirm_cloudflare_dns_ready() {
     local domain="$1"
     local resolved_ips
+    local mode_label
 
     resolved_ips="$(resolve_domain_ipv4 "$domain")"
+    mode_label="$(cloudflare_mode_label "$CADDY_CLOUDFLARE_MODE")"
 
     if [ -n "$resolved_ips" ]; then
         log_info "$domain 当前公开解析到: $resolved_ips"
-        log_info "如果已开橙云,这里显示 Cloudflare 边缘 IP 是正常现象"
+        if [ "$CADDY_CLOUDFLARE_MODE" = "orange-cloud-http01" ]; then
+            log_info "橙云模式下这里显示 Cloudflare 边缘 IP 是正常现象"
+        else
+            log_info "灰云直连模式下这里应解析到 VPS/GCP 公网 IP"
+        fi
     else
         log_warning "未查询到 $domain 的 IPv4 解析记录"
     fi
 
-    ask_yes_no "是否已确认 Cloudflare A 记录内容为 VPS 公网 IP 且橙云已开启? 后续将使用 :${CADDY_HTTPS_PORT} 访问" "y"
+    ask_yes_no "是否已确认 Cloudflare A 记录内容为 VPS 公网 IP,记录模式为 ${mode_label}? 后续将使用 :${CADDY_HTTPS_PORT} 访问" "y"
 }
 
 prompt_cloudflare_domain() {
@@ -401,12 +549,35 @@ prompt_app_name() {
     done
 }
 
+prompt_public_path() {
+    local prompt="$1"
+    local default_path="$2"
+    local path
+
+    while true; do
+        printf "${BLUE}%s [默认%s]: ${NC}" "$prompt" "$default_path"
+        read -r path
+        path=${path:-$default_path}
+        path="$(normalize_path_prefix "$path")"
+
+        if is_valid_path_prefix "$path"; then
+            CADDY_PUBLIC_PATH="$path"
+            return 0
+        fi
+
+        log_error "路径无效,示例: /nezha"
+    done
+}
+
 collect_sui_proxy_config() {
     local port
     local path
     local default_subscription_path
 
     show_domain_notice
+    select_cloudflare_mode || return 1
+    select_entry_mode "s-ui" || return 1
+    CADDY_PUBLIC_PATH="/app"
 
     prompt_cloudflare_domain "请输入用于访问 s-ui 的域名" || return 1
 
@@ -473,6 +644,14 @@ collect_nezha_proxy_config() {
     local port
 
     show_domain_notice
+    select_cloudflare_mode || return 1
+    select_entry_mode "Nezha" || return 1
+    if [ "$CADDY_ENTRY_MODE" = "path" ]; then
+        prompt_public_path "Nezha Dashboard 公网路径" "/nezha" || return 1
+    else
+        CADDY_PUBLIC_PATH="/"
+    fi
+
     prompt_cloudflare_domain "请输入用于访问 Nezha Dashboard 的域名" || return 1
 
     while true; do
@@ -490,7 +669,9 @@ collect_nezha_proxy_config() {
 
 ${YELLOW}${BOLD}Nezha 提示:${NC}
   Nezha V1 Dashboard 和 Agent 通信默认共享 8008 端口。
-  Cloudflare 橙云需要 WebSocket 支持;Agent 通信建议按 Nezha 文档检查。
+  Dashboard 可走独立域名根路径或同域名 ${CADDY_PUBLIC_PATH}/ 路径。
+  Agent 通信不带 Dashboard 路径,固定连接 域名:${CADDY_HTTPS_PORT} 并由 Caddy 匹配 /proto.NezhaService/*。
+  橙云代理下 Agent 通信建议按 Nezha/Cloudflare gRPC 文档检查;灰云直连最稳。
 
 EOF
 
@@ -502,6 +683,14 @@ collect_custom_proxy_config() {
     local upstream_host
 
     show_domain_notice
+    select_cloudflare_mode || return 1
+    select_entry_mode "自定义应用" || return 1
+    if [ "$CADDY_ENTRY_MODE" = "path" ]; then
+        prompt_public_path "自定义应用公网路径" "/custom" || return 1
+    else
+        CADDY_PUBLIC_PATH="/"
+    fi
+
     prompt_cloudflare_domain "请输入用于访问应用的域名" || return 1
 
     printf "${BLUE}上游主机 [默认127.0.0.1]: ${NC}"
@@ -766,7 +955,9 @@ Type: $app_type
 Domain: $domain
 Upstream: $upstream
 ${extra}
-CloudflareMode: orange-cloud-http01
+EntryMode: $CADDY_ENTRY_MODE
+PublicPath: $CADDY_PUBLIC_PATH
+CloudflareMode: $CADDY_CLOUDFLARE_MODE
 HTTPSPort: $CADDY_HTTPS_PORT
 PublicPorts: ${CADDY_HTTP_PORT}/tcp ${CADDY_HTTPS_PORT}/tcp
 CreatedAt: $(date '+%Y-%m-%d %H:%M:%S')
@@ -890,8 +1081,9 @@ verify_fail() {
 confirm_overwrite_app() {
     local app_name="$1"
     local app_file="$CADDY_APPS_DIR/${app_name}.caddy"
+    local state_file="$APPS_STATE_DIR/${app_name}.conf"
 
-    if [ ! -f "$app_file" ]; then
+    if [ ! -f "$app_file" ] && [ ! -f "$state_file" ]; then
         return 0
     fi
 
@@ -899,41 +1091,286 @@ confirm_overwrite_app() {
     ask_yes_no "是否覆盖现有配置?" "n"
 }
 
-write_sui_app_caddyfile() {
+caddy_matcher_name() {
+    local name="$1"
+    printf "app_%s" "$(printf "%s" "$name" | tr '-' '_')"
+}
+
+remove_legacy_managed_app_files() {
+    local state
+    local app_name
+
+    [ -d "$APPS_STATE_DIR" ] || return 0
+    for state in "$APPS_STATE_DIR"/*.conf; do
+        [ -f "$state" ] || continue
+        app_name="$(read_state_value "$state" "Name")"
+        app_name="${app_name:-$(basename "$state" .conf)}"
+        rm -f "$CADDY_APPS_DIR/${app_name}.caddy"
+    done
+}
+
+migrate_basic_auth_from_legacy_file() {
     local app_name="$1"
-    local app_file="$CADDY_APPS_DIR/${app_name}.caddy"
-    local auth_block=""
-    local subscription_block=""
-    local subscription_state="Subscription: disabled"
-    local subscription_path_matcher
-    local public_subscription_base
+    local legacy_file="$CADDY_APPS_DIR/${app_name}.caddy"
+    local line
 
-    ensure_caddy_log_file "$CADDY_LOG_DIR/s-ui-access.log" || return 1
+    [ -f "$legacy_file" ] || return 1
+    line="$(sed -n '/basic_auth argon2id {/,/}/p' "$legacy_file" 2>/dev/null | \
+        sed -n 's/^[[:space:]]*\([^[:space:]}][^[:space:]]*\)[[:space:]]\+\([^[:space:]}][^[:space:]]*\)[[:space:]]*$/\1 \2/p' | \
+        head -1)"
 
-    if [ "$CADDY_ENABLE_BASIC_AUTH" = "true" ]; then
-        auth_block="        basic_auth argon2id {
-            $CADDY_AUTH_USER $CADDY_AUTH_HASH
-        }
-"
-    fi
+    [ -n "$line" ] || return 1
+    echo "$line"
+}
 
-    if [ "$CADDY_ENABLE_SUBSCRIPTION" = "true" ]; then
-        subscription_path_matcher="${CADDY_SUBSCRIPTION_PATH} ${CADDY_SUBSCRIPTION_PATH}/*"
-        public_subscription_base="$(join_path_prefix "$CADDY_SUBSCRIPTION_PATH" "$CADDY_UPSTREAM_SUBSCRIPTION_PATH")"
-        subscription_block="    @subscription path $subscription_path_matcher
-    handle @subscription {
-        uri strip_prefix $CADDY_SUBSCRIPTION_PATH
-        reverse_proxy 127.0.0.1:$CADDY_SUBSCRIPTION_PORT
+domain_cloudflare_mode() {
+    local domain="$1"
+    local state
+    local state_domain
+    local mode
+    local selected=""
+
+    [ -d "$APPS_STATE_DIR" ] || {
+        echo "$DEFAULT_CLOUDFLARE_MODE"
+        return 0
     }
 
-"
-        subscription_state="Subscription: $public_subscription_base -> 127.0.0.1:$CADDY_SUBSCRIPTION_PORT
-SubscriptionPrefix: $CADDY_SUBSCRIPTION_PATH
-SubscriptionRewrite: strip-prefix $CADDY_SUBSCRIPTION_PATH"
+    for state in "$APPS_STATE_DIR"/*.conf; do
+        [ -f "$state" ] || continue
+        state_domain="$(read_state_value "$state" "Domain")"
+        [ "$state_domain" = "$domain" ] || continue
+        mode="$(read_state_value "$state" "CloudflareMode")"
+        mode="${mode:-$DEFAULT_CLOUDFLARE_MODE}"
+        if [ -z "$selected" ]; then
+            selected="$mode"
+        fi
+    done
+
+    echo "${selected:-$DEFAULT_CLOUDFLARE_MODE}"
+}
+
+render_sui_specific_routes() {
+    local state="$1"
+    local app_name
+    local matcher
+    local upstream
+    local dashboard_path
+    local subscription_line
+    local subscription_prefix
+    local subscription_upstream
+    local basic_auth
+    local basic_auth_user
+    local basic_auth_hash
+    local migrated_auth
+
+    app_name="$(read_state_value "$state" "Name")"
+    app_name="${app_name:-$(basename "$state" .conf)}"
+    matcher="$(caddy_matcher_name "$app_name")"
+    upstream="$(read_state_value "$state" "Upstream")"
+    dashboard_path="$(read_state_value "$state" "PublicPath")"
+    dashboard_path="${dashboard_path:-/app}"
+    subscription_line="$(read_state_value "$state" "Subscription")"
+    subscription_prefix="$(read_state_value "$state" "SubscriptionPrefix")"
+    subscription_upstream="$(parse_subscription_upstream_from_line "$subscription_line" 2>/dev/null || true)"
+    basic_auth="$(read_state_value "$state" "BasicAuth")"
+    basic_auth_user="$(read_state_value "$state" "BasicAuthUser")"
+    basic_auth_hash="$(read_state_value "$state" "BasicAuthHash")"
+
+    if [ "$basic_auth" = "true" ] && { [ -z "$basic_auth_user" ] || [ -z "$basic_auth_hash" ]; }; then
+        migrated_auth="$(migrate_basic_auth_from_legacy_file "$app_name" 2>/dev/null || true)"
+        if [ -n "$migrated_auth" ]; then
+            basic_auth_user="${migrated_auth%% *}"
+            basic_auth_hash="${migrated_auth#* }"
+            if grep -q "^BasicAuthUser:" "$state" 2>/dev/null; then
+                sed -i "s|^BasicAuthUser:.*|BasicAuthUser: $basic_auth_user|" "$state"
+            else
+                echo "BasicAuthUser: $basic_auth_user" >> "$state"
+            fi
+            if grep -q "^BasicAuthHash:" "$state" 2>/dev/null; then
+                sed -i "s|^BasicAuthHash:.*|BasicAuthHash: $basic_auth_hash|" "$state"
+            else
+                echo "BasicAuthHash: $basic_auth_hash" >> "$state"
+            fi
+        fi
     fi
 
-    cat > "$app_file" <<EOF
-$CADDY_DOMAIN {
+    if [ -n "$subscription_line" ] && [ "$subscription_line" != "disabled" ] && is_valid_path_prefix "$subscription_prefix"; then
+        cat <<EOF
+    @${matcher}_subscription path $subscription_prefix $subscription_prefix/*
+    handle @${matcher}_subscription {
+        uri strip_prefix $subscription_prefix
+        reverse_proxy $subscription_upstream
+    }
+
+EOF
+    fi
+
+    cat <<EOF
+    @${matcher}_dashboard path $dashboard_path $dashboard_path/*
+    handle @${matcher}_dashboard {
+EOF
+
+    if [ "$basic_auth" = "true" ] && [ -n "$basic_auth_user" ] && [ -n "$basic_auth_hash" ]; then
+        cat <<EOF
+        basic_auth argon2id {
+            $basic_auth_user $basic_auth_hash
+        }
+EOF
+    fi
+
+    cat <<EOF
+        reverse_proxy $upstream
+    }
+
+EOF
+}
+
+render_nezha_specific_routes() {
+    local state="$1"
+    local domain_mode="$2"
+    local app_name
+    local matcher
+    local upstream
+    local public_path
+    local real_ip
+
+    app_name="$(read_state_value "$state" "Name")"
+    app_name="${app_name:-$(basename "$state" .conf)}"
+    matcher="$(caddy_matcher_name "$app_name")"
+    upstream="$(read_state_value "$state" "Upstream")"
+    public_path="$(read_state_value "$state" "PublicPath")"
+    public_path="${public_path:-/}"
+    real_ip="$(cloudflare_real_ip_value "$domain_mode")"
+
+    cat <<EOF
+    @${matcher}_agent_grpc path /proto.NezhaService/*
+    handle @${matcher}_agent_grpc {
+        reverse_proxy {
+            header_up Host {host}
+            header_up nz-realip $real_ip
+            transport http {
+                versions h2c
+                read_buffer 4096
+            }
+            to $upstream
+        }
+    }
+
+EOF
+
+    if [ "$public_path" != "/" ]; then
+        cat <<EOF
+    @${matcher}_dashboard_base path $public_path
+    redir @${matcher}_dashboard_base $public_path/ 308
+
+    @${matcher}_dashboard path $public_path/*
+    handle @${matcher}_dashboard {
+        uri strip_prefix $public_path
+        reverse_proxy {
+            header_up Host {host}
+            header_up Origin https://{host}
+            header_up X-Forwarded-Prefix $public_path
+            header_up nz-realip $real_ip
+            transport http {
+                read_buffer 16384
+            }
+            to $upstream
+        }
+    }
+
+EOF
+    fi
+}
+
+render_custom_specific_routes() {
+    local state="$1"
+    local app_name
+    local matcher
+    local upstream
+    local public_path
+
+    app_name="$(read_state_value "$state" "Name")"
+    app_name="${app_name:-$(basename "$state" .conf)}"
+    matcher="$(caddy_matcher_name "$app_name")"
+    upstream="$(read_state_value "$state" "Upstream")"
+    public_path="$(read_state_value "$state" "PublicPath")"
+    public_path="${public_path:-/}"
+
+    if [ "$public_path" != "/" ]; then
+        cat <<EOF
+    @${matcher}_custom_base path $public_path
+    redir @${matcher}_custom_base $public_path/ 308
+
+    @${matcher}_custom path $public_path/*
+    handle @${matcher}_custom {
+        uri strip_prefix $public_path
+        reverse_proxy $upstream
+    }
+
+EOF
+    fi
+}
+
+render_root_route_if_needed() {
+    local state="$1"
+    local domain_mode="$2"
+    local app_type
+    local upstream
+    local public_path
+    local real_ip
+
+    app_type="$(read_state_value "$state" "Type")"
+    upstream="$(read_state_value "$state" "Upstream")"
+    public_path="$(read_state_value "$state" "PublicPath")"
+    public_path="${public_path:-/}"
+    real_ip="$(cloudflare_real_ip_value "$domain_mode")"
+
+    [ "$public_path" = "/" ] || return 0
+
+    case "$app_type" in
+        nezha)
+            cat <<EOF
+    handle {
+        reverse_proxy {
+            header_up Host {host}
+            header_up Origin https://{host}
+            header_up nz-realip $real_ip
+            transport http {
+                read_buffer 16384
+            }
+            to $upstream
+        }
+    }
+
+EOF
+            ;;
+        custom)
+            cat <<EOF
+    handle {
+        reverse_proxy $upstream
+    }
+
+EOF
+            ;;
+    esac
+}
+
+render_domain_caddyfile() {
+    local domain="$1"
+    local site_file
+    local site_log
+    local domain_mode
+    local state
+    local state_domain
+    local app_type
+
+    site_file="$(managed_site_file_for_domain "$domain")"
+    site_log="$CADDY_LOG_DIR/$(site_slug_from_domain "$domain")-access.log"
+    domain_mode="$(domain_cloudflare_mode "$domain")"
+    ensure_caddy_log_file "$site_log" || return 1
+
+    cat > "$site_file" <<EOF
+$domain {
     tls {
         issuer acme {
             disable_tlsalpn_challenge
@@ -943,104 +1380,122 @@ $CADDY_DOMAIN {
     encode zstd gzip
 
     log {
-        output file $CADDY_LOG_DIR/s-ui-access.log
+        output file $site_log
     }
 
-$subscription_block
-    handle {
-$auth_block        reverse_proxy 127.0.0.1:$CADDY_DASHBOARD_PORT
-    }
+EOF
+
+    for state in "$APPS_STATE_DIR"/*.conf; do
+        [ -f "$state" ] || continue
+        state_domain="$(read_state_value "$state" "Domain")"
+        [ "$state_domain" = "$domain" ] || continue
+        app_type="$(read_state_value "$state" "Type")"
+
+        case "$app_type" in
+            s-ui) render_sui_specific_routes "$state" >> "$site_file" ;;
+            nezha) render_nezha_specific_routes "$state" "$domain_mode" >> "$site_file" ;;
+            custom) render_custom_specific_routes "$state" >> "$site_file" ;;
+        esac
+    done
+
+    for state in "$APPS_STATE_DIR"/*.conf; do
+        [ -f "$state" ] || continue
+        state_domain="$(read_state_value "$state" "Domain")"
+        [ "$state_domain" = "$domain" ] || continue
+        render_root_route_if_needed "$state" "$domain_mode" >> "$site_file"
+    done
+
+    cat >> "$site_file" <<'EOF'
 }
 EOF
 
-    chown root:caddy "$app_file"
-    chmod 640 "$app_file"
+    chown root:caddy "$site_file"
+    chmod 640 "$site_file"
+}
+
+render_managed_caddy_apps() {
+    local state
+    local domain
+    local domains_file
+    local sorted_domains_file
+
+    mkdir -p "$CADDY_APPS_DIR" "$APPS_STATE_DIR" || return 1
+    rm -f "$CADDY_APPS_DIR"/"$CADDY_MANAGED_SITE_PREFIX"*.caddy
+
+    domains_file="$(mktemp)" || return 1
+    sorted_domains_file="$(mktemp)" || {
+        rm -f "$domains_file"
+        return 1
+    }
+
+    for state in "$APPS_STATE_DIR"/*.conf; do
+        [ -f "$state" ] || continue
+        domain="$(read_state_value "$state" "Domain")"
+        if is_valid_public_domain "$domain"; then
+            echo "$domain" >> "$domains_file"
+        else
+            log_warning "跳过无效域名状态记录: $state"
+        fi
+    done
+
+    if [ -s "$domains_file" ]; then
+        sort -u "$domains_file" > "$sorted_domains_file"
+        while read -r domain; do
+            [ -n "$domain" ] || continue
+            render_domain_caddyfile "$domain" || {
+                rm -f "$domains_file" "$sorted_domains_file"
+                return 1
+            }
+        done < "$sorted_domains_file"
+    fi
+
+    remove_legacy_managed_app_files
+    rm -f "$domains_file" "$sorted_domains_file"
+    return 0
+}
+
+write_sui_app_caddyfile() {
+    local app_name="$1"
+    local subscription_state="Subscription: disabled"
+    local public_subscription_base
+
+    ensure_caddy_log_file "$CADDY_LOG_DIR/s-ui-access.log" || return 1
+
+    if [ "$CADDY_ENABLE_SUBSCRIPTION" = "true" ]; then
+        public_subscription_base="$(join_path_prefix "$CADDY_SUBSCRIPTION_PATH" "$CADDY_UPSTREAM_SUBSCRIPTION_PATH")"
+        subscription_state="Subscription: $public_subscription_base -> 127.0.0.1:$CADDY_SUBSCRIPTION_PORT
+SubscriptionPrefix: $CADDY_SUBSCRIPTION_PATH
+SubscriptionRewrite: strip-prefix $CADDY_SUBSCRIPTION_PATH"
+    fi
+
     write_app_state "$app_name" "s-ui" "$CADDY_DOMAIN" "127.0.0.1:$CADDY_DASHBOARD_PORT" "$subscription_state
-BasicAuth: $CADDY_ENABLE_BASIC_AUTH"
+BasicAuth: $CADDY_ENABLE_BASIC_AUTH
+BasicAuthUser: $CADDY_AUTH_USER
+BasicAuthHash: $CADDY_AUTH_HASH"
+    render_managed_caddy_apps || return 1
 
     return 0
 }
 
 write_nezha_app_caddyfile() {
     local app_name="$1"
-    local app_file="$CADDY_APPS_DIR/${app_name}.caddy"
 
     ensure_caddy_log_file "$CADDY_LOG_DIR/${app_name}-access.log" || return 1
-
-    cat > "$app_file" <<EOF
-$CADDY_DOMAIN {
-    tls {
-        issuer acme {
-            disable_tlsalpn_challenge
-        }
-    }
-
-    encode zstd gzip
-
-    log {
-        output file $CADDY_LOG_DIR/${app_name}-access.log
-    }
-
-    @grpcProto {
-        path /proto.NezhaService/*
-    }
-
-    reverse_proxy @grpcProto {
-        header_up Host {host}
-        header_up nz-realip {http.CF-Connecting-IP}
-        transport http {
-            versions h2c
-            read_buffer 4096
-        }
-        to 127.0.0.1:$CADDY_NEZHA_PORT
-    }
-
-    reverse_proxy {
-        header_up Host {host}
-        header_up Origin https://{host}
-        header_up nz-realip {http.CF-Connecting-IP}
-        transport http {
-            read_buffer 16384
-        }
-        to 127.0.0.1:$CADDY_NEZHA_PORT
-    }
-}
-EOF
-
-    chown root:caddy "$app_file"
-    chmod 640 "$app_file"
-    write_app_state "$app_name" "nezha" "$CADDY_DOMAIN" "127.0.0.1:$CADDY_NEZHA_PORT" "Notes: Nezha V1 dashboard and agent communication share the same HTTP/gRPC port"
+    write_app_state "$app_name" "nezha" "$CADDY_DOMAIN" "127.0.0.1:$CADDY_NEZHA_PORT" "AgentServer: $(format_nezha_agent_server "$CADDY_DOMAIN" "$CADDY_HTTPS_PORT")
+AgentTLS: true
+AgentPath: /proto.NezhaService/*
+Notes: Nezha V1 dashboard and agent communication share the same HTTP/gRPC port"
+    render_managed_caddy_apps || return 1
 
     return 0
 }
 
 write_custom_app_caddyfile() {
     local app_name="$1"
-    local app_file="$CADDY_APPS_DIR/${app_name}.caddy"
 
     ensure_caddy_log_file "$CADDY_LOG_DIR/${app_name}-access.log" || return 1
-
-    cat > "$app_file" <<EOF
-$CADDY_DOMAIN {
-    tls {
-        issuer acme {
-            disable_tlsalpn_challenge
-        }
-    }
-
-    encode zstd gzip
-
-    log {
-        output file $CADDY_LOG_DIR/${app_name}-access.log
-    }
-
-    reverse_proxy $CADDY_CUSTOM_UPSTREAM
-}
-EOF
-
-    chown root:caddy "$app_file"
-    chmod 640 "$app_file"
     write_app_state "$app_name" "custom" "$CADDY_DOMAIN" "$CADDY_CUSTOM_UPSTREAM"
+    render_managed_caddy_apps || return 1
 
     return 0
 }
@@ -1198,7 +1653,7 @@ Version: ${version:-unknown}
 Email: $CADDY_EMAIL
 Caddyfile: $CADDYFILE
 AppsDir: $CADDY_APPS_DIR
-CloudflareMode: orange-cloud-http01
+CloudflareMode: per-app-orange-or-gray
 HTTPPort: $CADDY_HTTP_PORT
 HTTPSPort: $CADDY_HTTPS_PORT
 PublicPorts: ${CADDY_HTTP_PORT}/tcp ${CADDY_HTTPS_PORT}/tcp
@@ -1208,6 +1663,9 @@ EOF
 
 reset_app_config_defaults() {
     CADDY_DOMAIN=""
+    CADDY_CLOUDFLARE_MODE="$DEFAULT_CLOUDFLARE_MODE"
+    CADDY_ENTRY_MODE="$DEFAULT_ENTRY_MODE"
+    CADDY_PUBLIC_PATH="/"
     CADDY_DASHBOARD_PORT="$DEFAULT_DASHBOARD_PORT"
     CADDY_SUBSCRIPTION_PORT="$DEFAULT_SUBSCRIPTION_PORT"
     CADDY_SUBSCRIPTION_PATH="$DEFAULT_SUBSCRIPTION_PATH"
@@ -1273,6 +1731,7 @@ install_or_update_caddy_core() {
 
     log_step 6 8 "生成 Caddy 主配置"
     write_main_caddyfile || return 1
+    render_managed_caddy_apps || return 1
     validate_caddyfile || return 1
     repair_caddy_log_permissions || return 1
 
@@ -1307,6 +1766,7 @@ ensure_caddy_core_ready() {
         write_main_caddyfile || return 1
     fi
 
+    render_managed_caddy_apps || return 1
     reload_caddy_config || return 1
     write_install_flag
     return 0
@@ -1317,8 +1777,12 @@ show_app_post_install_info() {
     local app_type="$2"
     local title="$app_type HTTPS 入口配置完成"
     local public_url
+    local site_file
+    local agent_server
 
-    public_url="$(format_caddy_https_url "$CADDY_DOMAIN" "/")"
+    public_url="$(format_caddy_https_url "$CADDY_DOMAIN" "$(format_public_path_with_slash "$CADDY_PUBLIC_PATH")")"
+    site_file="$(managed_site_file_for_domain "$CADDY_DOMAIN")"
+    agent_server="$(format_nezha_agent_server "$CADDY_DOMAIN" "$CADDY_HTTPS_PORT")"
 
     cat << EOF
 
@@ -1327,9 +1791,31 @@ show_app_post_install_info() {
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ${BOLD}应用标识:${NC} $app_name
 ${BOLD}公网访问:${NC} ${CYAN}$public_url${NC}
-${BOLD}配置片段:${NC} $CADDY_APPS_DIR/${app_name}.caddy
+${BOLD}入口形态:${NC} $( [ "$CADDY_ENTRY_MODE" = "path" ] && echo "同域名路径" || echo "独立域名" )
+${BOLD}Cloudflare:${NC} $(cloudflare_mode_label "$CADDY_CLOUDFLARE_MODE")
+${BOLD}配置片段:${NC} $site_file
 ${BOLD}状态记录:${NC} $APPS_STATE_DIR/${app_name}.conf
 
+EOF
+
+    if [ "$app_type" = "Nezha" ]; then
+        cat << EOF
+${BOLD}Agent 通信:${NC}
+  NZ_SERVER=${CYAN}$agent_server${NC}
+  NZ_TLS=${CYAN}true${NC}
+  Caddy 会将 /proto.NezhaService/* 反代到 127.0.0.1:$CADDY_NEZHA_PORT
+
+EOF
+        if [ "$CADDY_CLOUDFLARE_MODE" = "orange-cloud-http01" ]; then
+            cat << EOF
+${YELLOW}提示:${NC} 橙云代理下 Agent gRPC 需要 Cloudflare 侧支持并正确开启 gRPC。
+      若 Agent 连接异常,建议为 Agent 单独使用灰云直连域名。
+
+EOF
+        fi
+    fi
+
+    cat << EOF
 ${BOLD}端口策略:${NC}
   Caddy 对公网只需要 ${CADDY_HTTP_PORT}/tcp 和 ${CADDY_HTTPS_PORT}/tcp
   ${CADDY_HTTP_PORT} 仅用于 ACME HTTP-01 证书验证和 HTTP->HTTPS 跳转
@@ -1354,7 +1840,7 @@ add_sui_proxy() {
     fi
 
     collect_sui_proxy_config || return 1
-    default_app_name="$(default_app_name_from_domain "$CADDY_DOMAIN")"
+    default_app_name="$(default_app_name_for_entry "$CADDY_DOMAIN" "sui")"
     prompt_app_name "$default_app_name" || return 1
     app_name="$CADDY_SELECTED_APP_NAME"
 
@@ -1379,6 +1865,9 @@ repair_sui_subscription_proxy() {
     local subscription_line
     local subscription_upstream
     local current_basic_auth
+    local entry_mode
+    local public_path
+    local cloudflare_mode
     local path
     local default_subscription_path
 
@@ -1410,6 +1899,9 @@ repair_sui_subscription_proxy() {
     subscription_line="$(read_state_value "$state_file" "Subscription")"
     subscription_upstream="${subscription_line##*-> }"
     current_basic_auth="$(read_state_value "$state_file" "BasicAuth")"
+    entry_mode="$(read_state_value "$state_file" "EntryMode")"
+    public_path="$(read_state_value "$state_file" "PublicPath")"
+    cloudflare_mode="$(read_state_value "$state_file" "CloudflareMode")"
 
     if ! is_valid_public_domain "$domain"; then
         log_warning "状态记录中的域名无效或为空"
@@ -1420,6 +1912,9 @@ repair_sui_subscription_proxy() {
     fi
 
     CADDY_DASHBOARD_PORT="$(extract_port_from_upstream "$dashboard_upstream" 2>/dev/null || echo "$DEFAULT_DASHBOARD_PORT")"
+    CADDY_ENTRY_MODE="${entry_mode:-$DEFAULT_ENTRY_MODE}"
+    CADDY_PUBLIC_PATH="${public_path:-/app}"
+    CADDY_CLOUDFLARE_MODE="${cloudflare_mode:-$DEFAULT_CLOUDFLARE_MODE}"
     CADDY_SUBSCRIPTION_PORT="$(extract_port_from_upstream "$subscription_upstream" 2>/dev/null || echo "$DEFAULT_SUBSCRIPTION_PORT")"
     CADDY_ENABLE_SUBSCRIPTION="true"
     CADDY_UPSTREAM_SUBSCRIPTION_PATH="$DEFAULT_SUI_UPSTREAM_SUBSCRIPTION_PATH"
@@ -1477,6 +1972,7 @@ verify_sui_caddy_setup() {
     local default_app_name
     local state_file
     local app_file
+    local legacy_app_file
     local domain
     local dashboard_upstream
     local dashboard_port
@@ -1487,6 +1983,7 @@ verify_sui_caddy_setup() {
     local subscription_prefix
     local subscription_rewrite
     local state_https_port
+    local public_path
     local dashboard_url
     local subscription_url
     local curl_code
@@ -1506,7 +2003,8 @@ verify_sui_caddy_setup() {
 
     app_name="$(normalize_app_name "$app_name")"
     state_file="$APPS_STATE_DIR/${app_name}.conf"
-    app_file="$CADDY_APPS_DIR/${app_name}.caddy"
+    legacy_app_file="$CADDY_APPS_DIR/${app_name}.caddy"
+    app_file="$legacy_app_file"
 
     cat << EOF
 
@@ -1576,24 +2074,30 @@ EOF
         verify_fail "应用状态记录不存在: $state_file"
     fi
 
-    if [ -f "$app_file" ]; then
-        verify_ok "应用 Caddy 片段存在: $app_file"
-    else
-        verify_fail "应用 Caddy 片段不存在: $app_file"
-    fi
-
     domain="$(read_state_value "$state_file" "Domain")"
     dashboard_upstream="$(read_state_value "$state_file" "Upstream")"
     subscription_line="$(read_state_value "$state_file" "Subscription")"
     subscription_prefix="$(read_state_value "$state_file" "SubscriptionPrefix")"
     subscription_rewrite="$(read_state_value "$state_file" "SubscriptionRewrite")"
     state_https_port="$(read_state_value "$state_file" "HTTPSPort")"
+    public_path="$(read_state_value "$state_file" "PublicPath")"
+    public_path="${public_path:-/app}"
 
     if is_valid_public_domain "$domain"; then
         CADDY_DOMAIN="$domain"
+        app_file="$(managed_site_file_for_domain "$domain")"
         verify_ok "公网域名有效: $domain"
     else
         verify_fail "状态记录中的域名无效: ${domain:-空}"
+    fi
+
+    if [ -f "$app_file" ]; then
+        verify_ok "域名聚合 Caddy 片段存在: $app_file"
+    elif [ -f "$legacy_app_file" ]; then
+        app_file="$legacy_app_file"
+        verify_warn "仍在使用旧版单应用 Caddy 片段: $legacy_app_file"
+    else
+        verify_fail "应用 Caddy 片段不存在: $app_file"
     fi
 
     dashboard_port="$(extract_port_from_upstream "$dashboard_upstream" 2>/dev/null || true)"
@@ -1764,7 +2268,7 @@ EOF
 
     echo
     if [ "$VERIFY_ERRORS" -eq 0 ]; then
-        dashboard_url="$(format_caddy_https_url "$CADDY_DOMAIN" "/app/")"
+        dashboard_url="$(format_caddy_https_url "$CADDY_DOMAIN" "$(format_public_path_with_slash "$public_path")")"
         subscription_url="$(format_caddy_https_url "$CADDY_DOMAIN" "$(join_path_prefix "$CADDY_SUBSCRIPTION_PATH" "$CADDY_UPSTREAM_SUBSCRIPTION_PATH")")"
 
         cat << EOF
@@ -1811,7 +2315,7 @@ add_nezha_proxy() {
     fi
 
     collect_nezha_proxy_config || return 1
-    default_app_name="$(default_app_name_from_domain "$CADDY_DOMAIN")"
+    default_app_name="$(default_app_name_for_entry "$CADDY_DOMAIN" "nezha")"
     prompt_app_name "$default_app_name" || return 1
     app_name="$CADDY_SELECTED_APP_NAME"
 
@@ -1833,7 +2337,7 @@ add_custom_proxy() {
     reset_app_config_defaults
     ensure_caddy_core_ready || return 1
     collect_custom_proxy_config || return 1
-    default_app_name="$(default_app_name_from_domain "$CADDY_DOMAIN")"
+    default_app_name="$(default_app_name_for_entry "$CADDY_DOMAIN" "custom")"
     prompt_app_name "$default_app_name" || return 1
     app_name="$CADDY_SELECTED_APP_NAME"
 
@@ -1861,7 +2365,7 @@ list_caddy_apps() {
     for state in "$APPS_STATE_DIR"/*.conf; do
         [ -f "$state" ] || continue
         echo
-        grep -E "^(Name|Type|Domain|Upstream|Subscription|SubscriptionPrefix|SubscriptionRewrite|BasicAuth|CloudflareMode|HTTPSPort|PublicPorts|CreatedAt):" "$state" | sed 's/^/  /'
+        grep -E "^(Name|Type|Domain|Upstream|EntryMode|PublicPath|Subscription|SubscriptionPrefix|SubscriptionRewrite|BasicAuth|CloudflareMode|AgentServer|AgentTLS|AgentPath|HTTPSPort|PublicPorts|CreatedAt):" "$state" | sed 's/^/  /'
     done
     echo
 }
@@ -1901,6 +2405,7 @@ delete_caddy_app() {
     fi
 
     rm -f "$app_file" "$state_file"
+    render_managed_caddy_apps || return 1
     reload_caddy_config || return 1
     log_success "已删除应用入口: $app_name"
     return 0
@@ -2085,6 +2590,7 @@ show_post_install_info() {
     local app_name="${1:-s-ui}"
     local auth_note="未启用"
     local dashboard_url
+    local site_file
     local subscription_note="未公开"
     local subscription_upstream="未公开"
     local subscription_rewrite="未启用"
@@ -2092,7 +2598,8 @@ show_post_install_info() {
     if [ "$CADDY_ENABLE_BASIC_AUTH" = "true" ]; then
         auth_note="已启用,用户名: $CADDY_AUTH_USER"
     fi
-    dashboard_url="$(format_caddy_https_url "$CADDY_DOMAIN" "/app/")"
+    dashboard_url="$(format_caddy_https_url "$CADDY_DOMAIN" "$(format_public_path_with_slash "$CADDY_PUBLIC_PATH")")"
+    site_file="$(managed_site_file_for_domain "$CADDY_DOMAIN")"
     if [ "$CADDY_ENABLE_SUBSCRIPTION" = "true" ]; then
         subscription_public_base="$(join_path_prefix "$CADDY_SUBSCRIPTION_PATH" "$CADDY_UPSTREAM_SUBSCRIPTION_PATH")"
         subscription_note="$(format_caddy_https_url "$CADDY_DOMAIN" "$subscription_public_base")"
@@ -2108,6 +2615,8 @@ show_post_install_info() {
 ${BOLD}公网访问:${NC}
   Dashboard: ${CYAN}$dashboard_url${NC}
   订阅入口: ${CYAN}$subscription_note${NC}
+  入口形态: $( [ "$CADDY_ENTRY_MODE" = "path" ] && echo "同域名路径" || echo "独立域名" )
+  Cloudflare: $(cloudflare_mode_label "$CADDY_CLOUDFLARE_MODE")
 
 ${BOLD}本地反代:${NC}
   Dashboard -> 127.0.0.1:$CADDY_DASHBOARD_PORT
@@ -2121,7 +2630,7 @@ ${BOLD}端口策略:${NC}
   ${CADDY_HTTP_PORT} 仅用于 ACME HTTP-01 证书验证和 HTTP->HTTPS 跳转
   ${CADDY_HTTPS_PORT} 用于 Caddy 面板 HTTPS 入口
   443/tcp 留给 s-ui/Xray VLESS Reality
-  已禁用 TLS-ALPN challenge,适配 Cloudflare 橙云代理
+  已禁用 TLS-ALPN challenge,兼容 Cloudflare 橙云代理和灰云直连
   日常访问请使用 HTTPS 并带上 :${CADDY_HTTPS_PORT}
 
 ${BOLD}管理命令:${NC}
@@ -2132,7 +2641,7 @@ ${BOLD}管理命令:${NC}
 
 ${BOLD}配置文件:${NC}
   Caddyfile: $CADDYFILE
-  应用片段: $CADDY_APPS_DIR/${app_name}.caddy
+  应用片段: $site_file
   证书数据: $CADDY_DATA_DIR
   访问日志: $CADDY_LOG_DIR/s-ui-access.log
 

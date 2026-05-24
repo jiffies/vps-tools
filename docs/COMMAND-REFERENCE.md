@@ -742,7 +742,8 @@ sudo vim /etc/caddy/Caddyfile
 
 # 应用入口片段
 sudo ls -la /etc/caddy/apps.d/
-sudo vim /etc/caddy/apps.d/YOUR_APP.caddy
+# VPS Tools 会按域名聚合生成 _vps-tools-*.caddy
+sudo vim /etc/caddy/apps.d/_vps-tools-YOUR-DOMAIN.caddy
 
 # 校验配置
 sudo caddy validate --config /etc/caddy/Caddyfile
@@ -772,11 +773,14 @@ sudo ./modules/install/caddy.sh reload
 
 ### s-ui反代
 ```bash
-# Dashboard默认入口
-https://YOUR_DOMAIN:8443/app/
+# 独立域名模式
+https://sui.example.com:8443/app/
+
+# 同域名路径模式
+https://example.com:8443/app/
 
 # 订阅入口默认不公开;如手动选择公开,脚本会生成长随机前缀
-https://YOUR_DOMAIN:8443/随机前缀/sub
+https://example.com:8443/随机前缀/sub
 
 # 外部随机前缀会由 Caddy 移除,后面的 /sub/... 保持给 s-ui
 # 例如: /a1b2c3/sub/client-id -> 127.0.0.1:2096/sub/client-id
@@ -791,8 +795,15 @@ sudo ./modules/install/caddy.sh verify-sui YOUR_APP_NAME
 
 ### Nezha反代
 ```bash
-# Dashboard默认入口
+# 独立域名模式
 https://NEZHA_DOMAIN:8443/
+
+# 同域名路径模式
+https://example.com:8443/nezha/
+
+# Agent 通信不带 /nezha/ 路径,由 Caddy 固定匹配 /proto.NezhaService/*
+NZ_SERVER=example.com:8443
+NZ_TLS=true
 
 # 本地目标端口
 127.0.0.1:8008  # Nezha V1 默认 Dashboard/Agent 通信端口
@@ -801,8 +812,9 @@ https://NEZHA_DOMAIN:8443/
 ### 证书与域名
 ```bash
 # Cloudflare DNS 中 A 记录内容必须填 VPS 公网 IP,不是10.x/172.16-31.x/192.168.x内网IP
-# 记录状态建议开启 Proxied / 橙云
-# Cloudflare SSL/TLS 模式建议使用 Full (strict)
+# 支持 Proxied / 橙云代理,也支持 DNS only / 灰云直连
+# 橙云模式下 Cloudflare SSL/TLS 模式建议使用 Full (strict)
+# 灰云模式下域名应直接解析到 VPS/GCP 公网 IP
 
 # 查看公网IP
 curl -fsS https://api.ipify.org
@@ -815,6 +827,21 @@ sudo ls -la /var/lib/caddy
 sudo ufw allow 80/tcp comment 'Caddy HTTP'
 sudo ufw allow 8443/tcp comment 'Caddy HTTPS'
 sudo ufw allow 443/tcp comment 's-ui Reality'
+```
+
+### 同域名路径聚合示例
+```bash
+# 同一个域名可以同时挂多个入口,Caddy 会生成一个域名聚合站点块
+https://example.com:8443/app/      # s-ui Dashboard
+https://example.com:8443/nezha/    # Nezha Dashboard
+
+# Nezha Agent 仍然连接同一个域名和端口,不填写路径
+NZ_SERVER=example.com:8443
+NZ_TLS=true
+
+# 橙云下如果 Agent gRPC 异常,建议给 Agent 单独使用灰云直连域名
+NZ_SERVER=data.example.com:8443
+NZ_TLS=true
 ```
 
 ---
@@ -928,8 +955,9 @@ http://127.0.0.1:8008/dashboard
 ### 客户端 Agent
 ```bash
 # 安装客户端时需要从 Dashboard 服务器页面复制这些参数
-NZ_SERVER=data.example.com:8008
-NZ_TLS=false
+# 如果 Dashboard 通过 Caddy 8443 暴露,Agent 使用域名:8443,不要填写 /nezha/ 路径
+NZ_SERVER=example.com:8443
+NZ_TLS=true
 NZ_CLIENT_SECRET=********
 NZ_UUID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 ```

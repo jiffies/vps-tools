@@ -590,7 +590,8 @@ ${BOLD}本地访问:${NC}
 
 ${BOLD}后续公网入口:${NC}
   进入 ${CYAN}13. Caddy HTTPS入口管理${NC}
-  默认访问格式: https://你的域名:8443/
+  可选择独立域名入口: https://nezha.example.com:8443/
+  也可选择同域名路径入口: https://example.com:8443/nezha/
   选择 ${CYAN}添加/更新 Nezha Dashboard 入口${NC}
 
 EOF

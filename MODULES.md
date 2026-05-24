@@ -74,18 +74,20 @@
 - **包含**:
   - 从Caddy官方下载接口安装最新版静态二进制
   - 创建systemd服务
-  - 生成主 Caddyfile 并通过 `/etc/caddy/apps.d/*.caddy` 导入应用片段
+  - 生成主 Caddyfile 并通过 `/etc/caddy/apps.d/*.caddy` 导入按域名聚合的应用片段
+  - 支持独立域名入口和同域名路径入口,例如 `sui.example.com/app/`、`nezha.example.com/` 或 `example.com/app/`、`example.com/nezha/`
   - 支持 s-ui dashboard(默认2095),订阅入口默认不公开、可选长随机前缀公开到2096
   - 订阅入口使用 `/随机前缀/sub/订阅ID`,Caddy 自动移除随机前缀并保留 s-ui 内部 `/sub/`
   - 提供 s-ui + Caddy 配置检验,成功后打印 Dashboard 和订阅入口
   - 支持 Nezha Dashboard(默认8008)和自定义应用反代
-  - 引导用户确认域名 A 记录内容指向 VPS 公网 IP 且 Cloudflare 橙云已开启
+  - 引导用户选择 Cloudflare 橙云代理或灰云直连,并确认域名 A 记录内容指向 VPS 公网 IP
   - 可选Basic Auth,默认不启用
 - **安全改进**:
   - 交互确认是否开放80/tcp和8443/tcp
   - 80仅用于HTTP-01证书验证和HTTP->HTTPS跳转
   - 443/tcp 留给 s-ui/Xray VLESS Reality
   - 禁用TLS-ALPN challenge,避免Cloudflare橙云拦截源站验证
+  - 灰云直连下 Nezha 真实 IP 使用 `{remote_host}`,橙云代理下使用 `CF-Connecting-IP`
   - 明确区分公网IP和内网IP,提醒Cloudflare A记录内容指向公网IP
 - **状态**: 已实现
 
